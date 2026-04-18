@@ -1,0 +1,172 @@
+[
+  {
+    "id": "d208e440-c93e-4c0c-9b43-649db74ae32f",
+    "service": "checkout-ui",
+    "environment": "production",
+    "start_time": "2026-04-16T04:45:55.716877",
+    "peak_time": "2026-04-16T05:00:55.716877",
+    "resolved_time": "2026-04-16T05:30:55.716877",
+    "symptoms": [
+      "OOM Killed",
+      "Pod Restarted"
+    ],
+    "signals": [
+      {
+        "metric": "cpu_usage",
+        "value": "99%"
+      },
+      {
+        "log": "Exception: Connection Refused"
+      }
+    ],
+    "changes": [
+      {
+        "event": "deploy",
+        "version": "v1.8"
+      }
+    ],
+    "root_cause": "Memory leak in the new caching layer introduced in version 2.1.",
+    "fixes_applied": [
+      "Reverted caching layer to previous version."
+    ],
+    "runbook_refs": [
+      "https://wiki.company.com/runbook/checkout-ui"
+    ]
+  },
+  {
+    "id": "c32acf76-9754-457b-9b67-7d078cc6fff3",
+    "service": "inventory-service",
+    "environment": "production",
+    "start_time": "2026-03-21T13:45:55.716877",
+    "peak_time": "2026-03-21T14:00:55.716877",
+    "resolved_time": "2026-03-21T14:30:55.716877",
+    "symptoms": [
+      "DB Connection Wait Error",
+      "Slow Queries"
+    ],
+    "signals": [
+      {
+        "metric": "cpu_usage",
+        "value": "99%"
+      },
+      {
+        "log": "Exception: Connection Refused"
+      }
+    ],
+    "changes": [
+      {
+        "event": "deploy",
+        "version": "v1.8"
+      }
+    ],
+    "root_cause": "Downstream third-party payment gateway experienced an outage.",
+    "fixes_applied": [
+      "Implemented circuit breaker and retry with exponential backoff."
+    ],
+    "runbook_refs": [
+      "https://wiki.company.com/runbook/inventory-service"
+    ]
+  },
+  {
+    "id": "ad16e699-dd78-4950-a627-d4a1e088610b",
+    "service": "inventory-service",
+    "environment": "production",
+    "start_time": "2026-03-23T17:45:55.716877",
+    "peak_time": "2026-03-23T18:00:55.716877",
+    "resolved_time": "2026-03-23T18:30:55.716877",
+    "symptoms": [
+      "DB Connection Wait Error",
+      "Slow Queries"
+    ],
+    "signals": [
+      {
+        "metric": "cpu_usage",
+        "value": "99%"
+      },
+      {
+        "log": "Exception: Connection Refused"
+      }
+    ],
+    "changes": [
+      {
+        "event": "deploy",
+        "version": "v1.4"
+      }
+    ],
+    "root_cause": "Downstream third-party payment gateway experienced an outage.",
+    "fixes_applied": [
+      "Implemented circuit breaker and retry with exponential backoff."
+    ],
+    "runbook_refs": [
+      "https://wiki.company.com/runbook/inventory-service"
+    ]
+  },
+  {
+    "id": "118f05cc-407c-4ff5-a6a4-115ae10453c7",
+    "service": "checkout-ui",
+    "environment": "production",
+    "start_time": "2026-03-27T09:45:55.716877",
+    "peak_time": "2026-03-27T10:00:55.716877",
+    "resolved_time": "2026-03-27T10:30:55.716877",
+    "symptoms": [
+      "OOM Killed",
+      "Pod Restarted"
+    ],
+    "signals": [
+      {
+        "metric": "cpu_usage",
+        "value": "99%"
+      },
+      {
+        "log": "Exception: Connection Refused"
+      }
+    ],
+    "changes": [
+      {
+        "event": "deploy",
+        "version": "v1.8"
+      }
+    ],
+    "root_cause": "Memory leak in the new caching layer introduced in version 2.1.",
+    "fixes_applied": [
+      "Reverted caching layer to previous version."
+    ],
+    "runbook_refs": [
+      "https://wiki.company.com/runbook/checkout-ui"
+    ]
+  },
+  {
+    "id": "d1bcaa46-6628-42ee-8340-297b79b2cbd3",
+    "service": "auth-gateway",
+    "environment": "production",
+    "start_time": "2026-03-31T06:45:55.716877",
+    "peak_time": "2026-03-31T07:00:55.716877",
+    "resolved_time": "2026-03-31T07:30:55.716877",
+    "symptoms": [
+      "SSL Handshake Failed",
+      "Network Timeout"
+    ],
+    "signals": [
+      {
+        "metric": "cpu_usage",
+        "value": "99%"
+      },
+      {
+        "log": "Exception: Connection Refused"
+      }
+    ],
+    "changes": [
+      {
+        "event": "deploy",
+        "version": "v1.5"
+      }
+    ],
+    "root_cause": "Expired SSL certificate on the internal auth service.",
+    "fixes_applied": [
+      "Renewed and deployed new wildcard SSL certificate."
+    ],
+    "runbook_refs": [
+      "https://wiki.company.com/runbook/auth-gateway"
+    ]
+  }
+]

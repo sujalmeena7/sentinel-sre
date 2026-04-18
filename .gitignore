@@ -1,0 +1,28 @@
+# Backend
+backend/.env
+backend/venv/
+backend/__pycache__/
+backend/*.pyc
+backend/incidents.db
+backend/chroma_db/
+backend/.pytest_cache/
+
+# Frontend
+frontend/node_modules/
+frontend/.next/
+frontend/.env.local
+frontend/dist/
+frontend/build/
+
+# General
+.DS_Store
+Thumbs.db
+*.log
+.vscode/
+.idea/
+*.png
+*.jpg
+*.jpeg
+*.svg
+!frontend/public/*.svg
+!frontend/public/*.png
