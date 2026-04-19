@@ -7,9 +7,9 @@ import {
   Brain, Loader2, Sparkles, Search, ShieldCheck,
   Zap, BarChart3, Target, ChevronDown, ChevronUp,
   AlertTriangle, CheckCircle2, Activity,
-  ThumbsUp, ThumbsDown, FileText, Copy, Download, X, Pencil
+  ThumbsUp, ThumbsDown, FileText, Copy, Download, X, Pencil, Send, CheckCheck
 } from 'lucide-react';
-import { Incident, analyzeIncident, submitFeedback, generatePostmortem } from '@/lib/api';
+import { Incident, analyzeIncident, submitFeedback, generatePostmortem, dispatchPostmortem } from '@/lib/api';
 
 interface Hypothesis {
   rank: number;
@@ -97,6 +97,11 @@ export default function AIAnalysisPanel({ incident }: AIAnalysisPanelProps) {
   const [pmEditText, setPmEditText] = useState('');
   const [copied, setCopied] = useState(false);
   const [showRejected, setShowRejected] = useState(false);
+  const [showDispatchModal, setShowDispatchModal] = useState(false);
+  const [dispatchDestination, setDispatchDestination] = useState<'slack' | 'teams'>('slack');
+  const [dispatchLoading, setDispatchLoading] = useState(false);
+  const [dispatchError, setDispatchError] = useState<string | null>(null);
+  const [showDispatchSuccess, setShowDispatchSuccess] = useState(false);
 
   const handleFeedback = async (score: number) => {
     setFeedbackStatus('submitting');
@@ -139,6 +144,21 @@ export default function AIAnalysisPanel({ incident }: AIAnalysisPanelProps) {
     a.download = `postmortem-${incident.service}-${incident.id.slice(0, 8)}.md`;
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  const handleDispatch = async () => {
+    setDispatchLoading(true);
+    setDispatchError(null);
+    try {
+      await dispatchPostmortem(incident.id, dispatchDestination);
+      setShowDispatchModal(false);
+      setShowDispatchSuccess(true);
+      setTimeout(() => setShowDispatchSuccess(false), 3000);
+    } catch (err: any) {
+      setDispatchError(err.message || 'Failed to dispatch postmortem');
+    } finally {
+      setDispatchLoading(false);
+    }
   };
 
   const runAnalysis = async () => {
@@ -584,6 +604,13 @@ export default function AIAnalysisPanel({ incident }: AIAnalysisPanelProps) {
                     <Download size={14} />
                   </button>
                   <button
+                    onClick={() => { setDispatchError(null); setShowDispatchModal(true); }}
+                    className="p-2 bg-surface-100 hover:bg-cyan-500/20 text-slate-400 hover:text-cyan-300 rounded-lg transition-all border border-white/5"
+                    title="Dispatch to channel"
+                  >
+                    <Send size={14} />
+                  </button>
+                  <button
                     onClick={() => setShowPmModal(false)}
                     className="p-2 bg-surface-100 hover:bg-rose-500/20 text-slate-400 hover:text-rose-400 rounded-lg transition-all border border-white/5"
                   >
@@ -623,9 +650,108 @@ export default function AIAnalysisPanel({ incident }: AIAnalysisPanelProps) {
                   >
                     <Download size={12} /> Download .md
                   </button>
+                  <button
+                    onClick={() => { setDispatchError(null); setShowDispatchModal(true); }}
+                    className="px-4 py-2 bg-gradient-to-r from-violet-500/20 to-cyan-500/20 hover:from-violet-500/30 hover:to-cyan-500/30 text-violet-200 border border-violet-500/30 rounded-lg text-sm flex items-center gap-2 transition-all"
+                  >
+                    <Send size={12} /> Dispatch to Channel
+                  </button>
                 </div>
               </div>
             </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ═══ Dispatch Modal ═══ */}
+      <AnimatePresence>
+        {showDispatchModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[60] flex items-center justify-center p-4"
+            style={{ backgroundColor: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(8px)' }}
+            onClick={() => setShowDispatchModal(false)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+              className="bg-surface-200 border border-white/10 rounded-2xl w-full max-w-md shadow-2xl p-5"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center gap-3 mb-4">
+                <div className="p-2 rounded-lg bg-violet-500/15 border border-violet-500/20">
+                  <Send size={16} className="text-violet-300" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-semibold text-slate-100">Dispatch to Channel</h4>
+                  <p className="text-xs text-slate-400">Choose destination for this postmortem.</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 mb-4">
+                <button
+                  onClick={() => setDispatchDestination('slack')}
+                  className={`px-3 py-2 rounded-lg border text-sm transition-all ${
+                    dispatchDestination === 'slack'
+                      ? 'bg-[#4A154B]/25 border-[#4A154B]/60 text-[#E5D3F2]'
+                      : 'bg-surface-100 border-white/10 text-slate-300 hover:border-white/20'
+                  }`}
+                >
+                  <span className="inline-flex w-4 h-4 mr-2 rounded bg-[#4A154B]/90 align-middle" /> Slack
+                </button>
+                <button
+                  onClick={() => setDispatchDestination('teams')}
+                  className={`px-3 py-2 rounded-lg border text-sm transition-all ${
+                    dispatchDestination === 'teams'
+                      ? 'bg-[#464EB8]/25 border-[#464EB8]/60 text-[#DDE1FF]'
+                      : 'bg-surface-100 border-white/10 text-slate-300 hover:border-white/20'
+                  }`}
+                >
+                  <span className="inline-flex w-4 h-4 mr-2 rounded bg-[#464EB8]/90 align-middle" /> Teams
+                </button>
+              </div>
+
+              {dispatchError && (
+                <p className="text-xs text-rose-400 mb-3">{dispatchError}</p>
+              )}
+
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  onClick={() => setShowDispatchModal(false)}
+                  className="px-3 py-2 text-xs rounded-lg bg-surface-100 border border-white/10 text-slate-300 hover:bg-surface-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleDispatch}
+                  disabled={dispatchLoading}
+                  className="px-3 py-2 text-xs rounded-lg bg-gradient-to-r from-violet-500/25 to-cyan-500/25 border border-violet-500/30 text-violet-100 hover:from-violet-500/35 hover:to-cyan-500/35 disabled:opacity-50 flex items-center gap-2"
+                >
+                  {dispatchLoading ? <><Loader2 size={12} className="animate-spin" /> Sending...</> : <><Send size={12} /> Dispatch</>}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ═══ Dispatch Success Toast ═══ */}
+      <AnimatePresence>
+        {showDispatchSuccess && (
+          <motion.div
+            initial={{ opacity: 0, y: 20, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 20, scale: 0.95 }}
+            className="fixed bottom-6 right-6 z-[70] bg-emerald-500/15 border border-emerald-500/30 rounded-xl px-4 py-3 shadow-xl backdrop-blur-sm"
+          >
+            <div className="flex items-center gap-2 text-emerald-300 text-sm">
+              <CheckCheck size={16} />
+              <span>Postmortem delivered successfully.</span>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>

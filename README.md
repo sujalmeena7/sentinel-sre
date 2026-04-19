@@ -10,6 +10,7 @@ Sentinel-SRE is a next-generation incident management platform that transforms h
 - **Feedback-Aware RAG:** Learns from human engineer feedback (Thumbs Up/Down) to refine future hypotheses and filter out "noisy" historic data.
 - **Service Dependency Graph:** Interactive SVG visualization showing real-time blast radius and downstream impact propagation.
 - **Automated Postmortems:** Generates senior-level SRE postmortems in Markdown, ready for copy/download.
+- **Channel Dispatch:** Send generated postmortems directly to Slack or Microsoft Teams via Incoming Webhooks.
 - **"Why Not X?" Explainability:** Transparently shows why certain theories were rejected, reducing "AI black box" frustration.
 - **Chaos Simulation:** Built-in "Chaos Lab" to simulate memory leaks, DB spikes, and network outages for testing response resilience.
 
@@ -30,7 +31,9 @@ Sentinel-SRE is a next-generation incident management platform that transforms h
  # Backend Setup
 1. `cd backend`
 2. `pip install -r requirements.txt`
-3. Create a `.env` file with your `GROQ_API_KEY`.
+3. Create a `.env` file with your `GROQ_API_KEY` and optional dispatch webhooks:
+   - `SLACK_WEBHOOK_URL=...`
+   - `TEAMS_WEBHOOK_URL=...`
 4. Run: `uvicorn main:app --reload`
 
 # Frontend Setup

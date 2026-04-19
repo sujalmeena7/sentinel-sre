@@ -1,19 +1,24 @@
 import os
 import asyncio
 import logging
-from fastapi import FastAPI, Depends, BackgroundTasks
+import re
+import httpx
+from fastapi import FastAPI, Depends, BackgroundTasks, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlmodel import Session, select
 from typing import List, Dict, Any, Optional, Union
 from pydantic import BaseModel
 from datetime import datetime, timezone
 from uuid import uuid4
+from dotenv import load_dotenv
 from models import Incident
 from database import init_db, get_session
 from rag_engine import add_incident_to_index, query_similar_incidents, generate_hypothesis, update_incident_in_index
 from hybrid_analyzer import run_hybrid_analysis
 from data_generator import generate_deterministic_incident
 
+load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 app = FastAPI(title="AI Root Cause Analyzer", version="0.2.0")
@@ -186,6 +191,11 @@ class SimulationRequest(BaseModel):
     failure_type: str
     severity: str
 
+
+class DispatchRequest(BaseModel):
+    destination: str
+    webhook_override: Optional[str] = None
+
 @app.post("/api/v1/simulation/trigger")
 def trigger_simulation(req: SimulationRequest, background_tasks: BackgroundTasks, session: Session = Depends(get_session)):
     logger.info(f"⚡ Chaos trigger received: service={req.service}, failure={req.failure_type}, severity={req.severity}")
@@ -243,15 +253,118 @@ def get_evaluation(session: Session = Depends(get_session)):
     }
 
 
-@app.post("/api/v1/incidents/{incident_id}/postmortem")
-async def generate_postmortem(incident_id: str, session: Session = Depends(get_session)):
+def _truncate_text(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    clipped = text[:limit]
+    if " " in clipped:
+        clipped = clipped.rsplit(" ", 1)[0]
+    return clipped + "…"
+
+
+def _markdown_sections(markdown: str) -> Dict[str, str]:
+    sections: Dict[str, str] = {}
+    active = "Executive Summary"
+    buffer: List[str] = []
+
+    for line in markdown.splitlines():
+        heading = re.match(r"^##\s+(.+)", line.strip())
+        if heading:
+            sections[active] = "\n".join(buffer).strip()
+            active = heading.group(1).strip()
+            buffer = []
+        elif not re.match(r"^#\s+.+", line.strip()):
+            buffer.append(line)
+
+    sections[active] = "\n".join(buffer).strip()
+    return {k: v for k, v in sections.items() if v}
+
+
+def _extract_section(sections: Dict[str, str], candidates: List[str], fallback: str) -> str:
+    for key, value in sections.items():
+        low = key.lower()
+        if any(token in low for token in candidates):
+            return value
+    return fallback
+
+
+def _incident_severity(incident: Incident) -> str:
+    return "severe" if incident.expected_cause else "moderate"
+
+
+def _slack_payload(markdown: str, incident: Incident) -> Dict[str, Any]:
+    sections = _markdown_sections(markdown)
+    severity = _incident_severity(incident)
+    accent = "#E01E5A" if severity == "severe" else "#FF8C00"
+    timestamp = incident.start_time.isoformat() if incident.start_time else "Unknown"
+    title = f"Postmortem • {incident.service}"
+
+    impact = _extract_section(sections, ["impact"], "Impact details unavailable.")
+    root_cause = _extract_section(sections, ["root cause"], "Root cause pending.")
+    actions = _extract_section(sections, ["action", "prevention"], "Action items pending.")
+
+    blocks = [
+        {"type": "header", "text": {"type": "plain_text", "text": _truncate_text(title, 150)}},
+        {
+            "type": "context",
+            "elements": [
+                {
+                    "type": "mrkdwn",
+                    "text": (
+                        f"*Incident:* `{incident.id[:8]}`  •  *Env:* `{incident.environment}`  •  "
+                        f"*Severity:* `{severity}`  •  *Start:* `{timestamp}`"
+                    )
+                }
+            ],
+        },
+        {"type": "divider"},
+        {"type": "section", "text": {"type": "mrkdwn", "text": f"*🚨 Impact*\n{_truncate_text(impact, 2900)}"}},
+        {"type": "section", "text": {"type": "mrkdwn", "text": f"*🔍 Root Cause*\n{_truncate_text(root_cause, 2900)}"}},
+        {"type": "section", "text": {"type": "mrkdwn", "text": f"*✅ Actions*\n{_truncate_text(actions, 2900)}"}},
+    ]
+
+    return {
+        "text": _truncate_text(f"Incident postmortem for {incident.service}", 300),
+        "attachments": [{"color": accent, "blocks": blocks[:50]}],
+    }
+
+
+def _teams_payload(markdown: str, incident: Incident) -> Dict[str, Any]:
+    sections = _markdown_sections(markdown)
+    severity = _incident_severity(incident)
+    theme_color = "D32F2F" if severity == "severe" else "F57C00"
+    timestamp = incident.start_time.isoformat() if incident.start_time else "Unknown"
+
+    impact = _extract_section(sections, ["impact"], "Impact details unavailable.")
+    root_cause = _extract_section(sections, ["root cause"], "Root cause pending.")
+    actions = _extract_section(sections, ["action", "prevention"], "Action items pending.")
+
+    return {
+        "@type": "MessageCard",
+        "@context": "http://schema.org/extensions",
+        "summary": f"Incident postmortem for {incident.service}",
+        "themeColor": theme_color,
+        "title": f"Postmortem • {incident.service}",
+        "text": (
+            f"**Incident:** `{incident.id[:8]}`\n\n"
+            f"**Environment:** `{incident.environment}`\n\n"
+            f"**Severity:** `{severity}`\n\n"
+            f"**Start:** `{timestamp}`"
+        ),
+        "sections": [
+            {"activityTitle": "🚨 Impact", "text": _truncate_text(impact, 7000), "markdown": True},
+            {"activityTitle": "🔍 Root Cause", "text": _truncate_text(root_cause, 7000), "markdown": True},
+            {"activityTitle": "✅ Actions", "text": _truncate_text(actions, 7000), "markdown": True},
+        ],
+    }
+
+
+async def _generate_postmortem_markdown(incident_id: str, session: Session) -> str:
     """
     Generate a structured incident postmortem using real incident data + AI analysis.
     Returns clean Markdown text generated by the LLM.
     """
     import traceback
-    from fastapi import HTTPException
-    from fastapi.responses import JSONResponse
     from rag_engine import get_llm
 
     incident = session.get(Incident, incident_id)
@@ -449,15 +562,58 @@ Constraints:
     # ── Call LLM ──────────────────────────────────────────────────
     llm = get_llm()
     if llm is None:
-        return JSONResponse(
-            status_code=503,
-            content={"detail": "No LLM configured. Set GROQ_API_KEY or OPENAI_API_KEY."}
-        )
+        raise HTTPException(status_code=503, detail="No LLM configured. Set GROQ_API_KEY or OPENAI_API_KEY.")
 
+    response = await asyncio.to_thread(llm.complete, prompt)
+    logger.info(f"📝 Postmortem generated for incident {incident_id}")
+    return response.text
+
+
+@app.post("/api/v1/incidents/{incident_id}/postmortem")
+async def generate_postmortem(incident_id: str, session: Session = Depends(get_session)):
+    import traceback
     try:
-        response = await asyncio.to_thread(llm.complete, prompt)
-        logger.info(f"📝 Postmortem generated for incident {incident_id}")
-        return {"postmortem": response.text}
+        markdown = await _generate_postmortem_markdown(incident_id, session)
+        return {"postmortem": markdown}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Postmortem generation failed: {traceback.format_exc()}")
         return JSONResponse(status_code=500, content={"detail": str(e)})
+
+
+@app.post("/api/v1/incidents/{incident_id}/dispatch")
+async def dispatch_postmortem(
+    incident_id: str,
+    req: DispatchRequest,
+    session: Session = Depends(get_session),
+):
+    incident = session.get(Incident, incident_id)
+    if not incident:
+        raise HTTPException(status_code=404, detail="Incident not found")
+
+    destination = (req.destination or "").strip().lower()
+    if destination not in {"slack", "teams"}:
+        raise HTTPException(status_code=400, detail="destination must be either 'slack' or 'teams'")
+
+    webhook_url = req.webhook_override or os.getenv("SLACK_WEBHOOK_URL" if destination == "slack" else "TEAMS_WEBHOOK_URL")
+    if not webhook_url:
+        raise HTTPException(status_code=400, detail=f"No webhook configured for {destination}")
+
+    markdown = await _generate_postmortem_markdown(incident_id, session)
+    payload = _slack_payload(markdown, incident) if destination == "slack" else _teams_payload(markdown, incident)
+
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        response = await client.post(webhook_url, json=payload)
+
+    if response.status_code >= 400:
+        raise HTTPException(
+            status_code=502,
+            detail=f"{destination} webhook rejected dispatch: {_truncate_text(response.text, 600)}",
+        )
+
+    return {
+        "status": "delivered",
+        "destination": destination,
+        "incident_id": incident_id,
+    }

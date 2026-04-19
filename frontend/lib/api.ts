@@ -96,3 +96,20 @@ export async function generatePostmortem(incident_id: string): Promise<{ postmor
   }
   return res.json();
 }
+
+export async function dispatchPostmortem(
+  incident_id: string,
+  destination: 'slack' | 'teams',
+  webhook_override?: string
+): Promise<{ status: string; destination: string; incident_id: string }> {
+  const res = await fetch(`${API_BASE}/incidents/${incident_id}/dispatch`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ destination, webhook_override: webhook_override || undefined }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Dispatch failed: ${res.status} - ${text}`);
+  }
+  return res.json();
+}
