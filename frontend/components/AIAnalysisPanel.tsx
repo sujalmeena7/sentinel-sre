@@ -83,6 +83,16 @@ const severityColors: Record<string, string> = {
   critical: 'text-accent-rose',
 };
 
+/**
+ * Render an interactive Hybrid AI Analysis panel for a given incident.
+ *
+ * Displays a four-stage hybrid reasoning UI (Rules → Anomaly → RAG → LLM) that
+ * can run an analysis, show ranked hypotheses, anomaly report, LLM narrative,
+ * rejected hypotheses, and generate/preview/edit/dispatch an incident postmortem.
+ *
+ * @param incident - The incident object to analyze and reference across the panel (used for IDs, service name, symptoms, and signals).
+ * @returns The React element representing the AIAnalysisPanel UI.
+ */
 export default function AIAnalysisPanel({ incident }: AIAnalysisPanelProps) {
   const [analysis, setAnalysis] = useState<HybridResult | null>(null);
   const [loading, setLoading] = useState(false);

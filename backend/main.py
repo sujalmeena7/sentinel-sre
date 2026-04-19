@@ -199,6 +199,16 @@ class DispatchRequest(BaseModel):
 
 @app.post("/api/v1/simulation/trigger")
 def trigger_simulation(req: SimulationRequest, background_tasks: BackgroundTasks, session: Session = Depends(get_session)):
+    """
+    Create and persist a deterministic simulation incident for the given service/failure inputs and schedule it for background processing.
+    
+    Parameters:
+        req (SimulationRequest): Simulation inputs including `service`, `failure_type`, and `severity`.
+        background_tasks (BackgroundTasks): FastAPI background task manager used to schedule incident processing.
+    
+    Returns:
+        dict: {"status": "triggered", "incident_id": "<uuid>"} where `incident_id` is the created incident's UUID string.
+    """
     logger.info(f"⚡ Chaos trigger received: service={req.service}, failure={req.failure_type}, severity={req.severity}")
     try:
         inc_data = generate_deterministic_incident(req.service, req.failure_type, req.severity)
@@ -232,6 +242,20 @@ def get_incidents(session: Session = Depends(get_session)):
 
 @app.get("/api/v1/evaluation")
 def get_evaluation(session: Session = Depends(get_session)):
+    """
+    Compute evaluation metrics for incidents that have both expected and predicted causes.
+    
+    Returns:
+        A dictionary with:
+        - total_tests: the number of incidents evaluated.
+        - correct_predictions: the count of incidents marked as correct.
+        - accuracy: percentage of correct predictions rounded to one decimal (0.0 if no tests).
+        - results: a list of evaluation records (most-recent first), each containing:
+            - service: service name,
+            - expected: the expected cause,
+            - predicted: the predicted cause,
+            - is_correct: truthy value indicating whether the prediction matched.
+    """
     incidents = session.exec(select(Incident).where(Incident.expected_cause != None).where(Incident.predicted_cause != None)).all()
     
     total = len(incidents)
@@ -255,6 +279,16 @@ def get_evaluation(session: Session = Depends(get_session)):
 
 
 def _truncate_text(text: str, limit: int) -> str:
+    """
+    Truncates a string to a maximum length and appends an ellipsis when truncation occurs, preferring to break on the last space within the limit.
+    
+    Parameters:
+        text (str): The input string to truncate.
+        limit (int): The maximum number of characters before truncation is applied.
+    
+    Returns:
+        str: The original string if its length is less than or equal to `limit`; otherwise a truncated string ending with the ellipsis character `…`.
+    """
     if len(text) <= limit:
         return text
     clipped = text[:limit]
@@ -264,6 +298,15 @@ def _truncate_text(text: str, limit: int) -> str:
 
 
 def _markdown_sections(markdown: str) -> Dict[str, str]:
+    """
+    Split Markdown into sections keyed by the most recent level-2 heading ("## Heading").
+    
+    Parameters:
+        markdown (str): Markdown text to parse.
+    
+    Returns:
+        Dict[str, str]: Mapping of section title to its trimmed content. The initial section is keyed as "Executive Summary" until the first "##" heading. Lines that are top-level headings starting with a single "# " are ignored. Empty sections are omitted.
+    """
     sections: Dict[str, str] = {}
     active = "Executive Summary"
     buffer: List[str] = []
@@ -282,6 +325,17 @@ def _markdown_sections(markdown: str) -> Dict[str, str]:
 
 
 def _extract_section(sections: Dict[str, str], candidates: List[str], fallback: str) -> str:
+    """
+    Selects the first section value whose heading contains any of the given candidate tokens, using case-insensitive matching.
+    
+    Parameters:
+        sections (Dict[str, str]): Mapping of section headings to their text.
+        candidates (List[str]): Tokens to search for within each heading (case-insensitive).
+        fallback (str): Value to return if no heading contains any candidate token.
+    
+    Returns:
+        str: The matched section text if found, otherwise `fallback`.
+    """
     for key, value in sections.items():
         low = key.lower()
         if any(token in low for token in candidates):
@@ -291,6 +345,17 @@ def _extract_section(sections: Dict[str, str], candidates: List[str], fallback: 
 
 def _incident_severity(incident: Incident) -> str:
     # 1) Human feedback is the strongest severity signal.
+    """
+    Determine the incident severity label used for presentation and dispatch.
+    
+    Severity is chosen by priority: human feedback score (high scores indicate greater severity), explicit signal severity values embedded in incident signals, the number of reported symptoms, and finally whether an expected cause exists as a fallback.
+    
+    Parameters:
+        incident (Incident): The incident record to evaluate.
+    
+    Returns:
+        str: One of "low", "moderate", or "severe" representing the incident's severity.
+    """
     feedback_score = incident.human_feedback_score or 0
     if feedback_score >= 8:
         return "severe"
@@ -325,12 +390,39 @@ def _incident_severity(incident: Incident) -> str:
 
 
 def _allowed_webhook_hosts(destination: str) -> List[str]:
+    """
+    Load and normalize the allowlist of webhook hostnames for a given destination.
+    
+    Reads the environment variable "SLACK_ALLOWED_HOSTS" when destination == "slack", otherwise "TEAMS_ALLOWED_HOSTS".
+    Parses the comma-separated value, trims whitespace, lowercases each entry, and omits empty tokens.
+    
+    Parameters:
+        destination (str): Destination identifier (e.g., "slack" or "teams") used to select the corresponding environment variable.
+    
+    Returns:
+        List[str]: A list of normalized host patterns (lowercase, trimmed). Returns an empty list if the environment variable is not set or contains no valid entries.
+    """
     env_key = "SLACK_ALLOWED_HOSTS" if destination == "slack" else "TEAMS_ALLOWED_HOSTS"
     raw = os.getenv(env_key, "")
     return [h.strip().lower() for h in raw.split(",") if h.strip()]
 
 
 def _is_override_webhook_allowed(webhook_override: str, destination: str) -> bool:
+    """
+    Determine whether a provided webhook override URL is allowed for the given destination.
+    
+    Parameters:
+        webhook_override (str): The candidate webhook URL to validate.
+        destination (str): Destination identifier (e.g., "slack" or "teams") used to look up the allowlist.
+    
+    Returns:
+        bool: `True` if the URL is permitted, `False` otherwise. A URL is permitted only if:
+            - its scheme is `https`,
+            - it contains a hostname,
+            - any explicit port is greater than 0,
+            - the destination has a non-empty allowlist, and
+            - the hostname matches an allowlist entry either exactly or via a wildcard prefix of the form `*.example.com`.
+    """
     parsed = urlparse(webhook_override)
     if parsed.scheme.lower() != "https":
         return False
@@ -357,6 +449,22 @@ def _is_override_webhook_allowed(webhook_override: str, destination: str) -> boo
 
 
 def _slack_payload(markdown: str, incident: Incident) -> Dict[str, Any]:
+    """
+    Builds a Slack Block Kit payload for delivering a postmortem generated as Markdown.
+    
+    This function parses the provided Markdown into Impact, Root Cause, and Actions sections, derives a severity from the incident, and assembles a Slack-compatible payload containing a header, context (incident id, environment, severity, start time), a divider, and three content sections. Text fields are length-limited where appropriate and the returned payload includes an attachment color chosen for the incident severity.
+    
+    Parameters:
+        markdown (str): Postmortem content in Markdown produced by the postmortem generator.
+        incident (Incident): Incident ORM object used to populate metadata (id, service, environment, start_time, etc.).
+    
+    Returns:
+        dict: A Slack message payload with keys:
+            - "text": short fallback/plain text summary.
+            - "attachments": list containing a single attachment dict with:
+                - "color": hex color code chosen by severity.
+                - "blocks": list of Slack Block Kit blocks (header, context, divider, and sections).
+    """
     sections = _markdown_sections(markdown)
     severity = _incident_severity(incident)
     accent = "#E01E5A" if severity == "severe" else "#FF8C00"
@@ -394,6 +502,16 @@ def _slack_payload(markdown: str, incident: Incident) -> Dict[str, Any]:
 
 
 def _teams_payload(markdown: str, incident: Incident) -> Dict[str, Any]:
+    """
+    Builds a Microsoft Teams MessageCard payload representing a postmortem using provided Markdown and incident metadata.
+    
+    Parameters:
+        markdown (str): Postmortem content in Markdown from which Impact, Root Cause, and Actions sections are extracted.
+        incident (Incident): Incident model used to populate metadata (id, service, environment, start_time, and severity-derived styling).
+    
+    Returns:
+        dict: A MessageCard-compatible dictionary containing summary, title, themeColor, main text with incident metadata, and `sections` for Impact, Root Cause, and Actions.
+    """
     sections = _markdown_sections(markdown)
     severity = _incident_severity(incident)
     theme_color = "D32F2F" if severity == "severe" else "F57C00"
@@ -425,8 +543,16 @@ def _teams_payload(markdown: str, incident: Incident) -> Dict[str, Any]:
 
 async def _generate_postmortem_markdown(incident_id: str, session: Session) -> str:
     """
-    Generate a structured incident postmortem using real incident data + AI analysis.
-    Returns clean Markdown text generated by the LLM.
+    Generate a concise, structured incident postmortem in Markdown using stored incident data and AI analysis.
+    
+    Gathers incident fields, recent signals/changes, a computed timeline and blast radius, and runs the hybrid analysis to produce hypotheses, suggested fixes, and a reasoning chain. The collected information is assembled into a constrained prompt presented to the configured LLM, and the LLM's output is returned verbatim as the postmortem Markdown.
+    
+    Returns:
+        str: The generated postmortem as clean Markdown.
+    
+    Raises:
+        HTTPException: 404 if the incident_id is not found.
+        HTTPException: 503 if no LLM is configured.
     """
     import traceback
     from rag_engine import get_llm
@@ -635,6 +761,19 @@ Constraints:
 
 @app.post("/api/v1/incidents/{incident_id}/postmortem")
 async def generate_postmortem(incident_id: str, session: Session = Depends(get_session)):
+    """
+    Generate a postmortem Markdown for the given incident and return it wrapped in a JSON object.
+    
+    Parameters:
+        incident_id (str): The unique identifier of the incident to generate the postmortem for.
+    
+    Returns:
+        dict: A JSON-serializable dictionary with a single key `"postmortem"` containing the generated Markdown string.
+        JSONResponse (on error): If postmortem generation raises an unexpected exception, returns a `JSONResponse` with status code 500 and `{"detail": <error string>}`.
+    
+    Raises:
+        HTTPException: Re-raises HTTPException propagated from the postmortem generation helper.
+    """
     import traceback
     try:
         markdown = await _generate_postmortem_markdown(incident_id, session)
@@ -652,6 +791,21 @@ async def dispatch_postmortem(
     req: DispatchRequest,
     session: Session = Depends(get_session),
 ):
+    """
+    Dispatches a generated postmortem for the given incident to the specified destination webhook (Slack or Teams).
+    
+    Parameters:
+        incident_id (str): The ID of the incident to generate and dispatch a postmortem for.
+        req (DispatchRequest): Dispatch parameters; must specify `destination` ('slack' or 'teams') and may include `webhook_override` to override the default webhook URL when allowed.
+    Returns:
+        dict: Delivery metadata with keys `status` ('delivered'), `destination`, and `incident_id`.
+    Raises:
+        HTTPException: 
+            - 404 if the incident is not found.
+            - 400 for invalid `destination`, when no webhook is configured for the destination, or when a provided `webhook_override` is not allowed and no default webhook exists.
+            - 502 if the remote webhook returns a >=400 response (response text is truncated in the detail).
+            - May propagate HTTPException from postmortem generation (for example, 503 when no LLM is configured).
+    """
     incident = session.get(Incident, incident_id)
     if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
