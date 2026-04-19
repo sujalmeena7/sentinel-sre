@@ -147,6 +147,12 @@ export default function AIAnalysisPanel({ incident }: AIAnalysisPanelProps) {
   };
 
   const handleDispatch = async () => {
+    const hasUnsavedEdits = pmEditing || (postmortem !== null && pmEditText !== postmortem);
+    if (hasUnsavedEdits) {
+      setDispatchError('Dispatch is disabled while edits are present. Save/revert to original postmortem first.');
+      return;
+    }
+
     setDispatchLoading(true);
     setDispatchError(null);
     try {
@@ -728,7 +734,7 @@ export default function AIAnalysisPanel({ incident }: AIAnalysisPanelProps) {
                 </button>
                 <button
                   onClick={handleDispatch}
-                  disabled={dispatchLoading}
+                  disabled={dispatchLoading || pmEditing || (postmortem !== null && pmEditText !== postmortem)}
                   className="px-3 py-2 text-xs rounded-lg bg-gradient-to-r from-violet-500/25 to-cyan-500/25 border border-violet-500/30 text-violet-100 hover:from-violet-500/35 hover:to-cyan-500/35 disabled:opacity-50 flex items-center gap-2"
                 >
                   {dispatchLoading ? <><Loader2 size={12} className="animate-spin" /> Sending...</> : <><Send size={12} /> Dispatch</>}

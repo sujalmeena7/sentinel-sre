@@ -3,6 +3,7 @@ import asyncio
 import logging
 import re
 import httpx
+from urllib.parse import urlparse
 from fastapi import FastAPI, Depends, BackgroundTasks, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -289,7 +290,70 @@ def _extract_section(sections: Dict[str, str], candidates: List[str], fallback: 
 
 
 def _incident_severity(incident: Incident) -> str:
-    return "severe" if incident.expected_cause else "moderate"
+    # 1) Human feedback is the strongest severity signal.
+    feedback_score = incident.human_feedback_score or 0
+    if feedback_score >= 8:
+        return "severe"
+    if feedback_score >= 3:
+        return "moderate"
+
+    # 2) Signal severity (if present in dynamic signal payloads).
+    signal_severity_rank = {"low": 1, "moderate": 2, "medium": 2, "high": 3, "critical": 4, "severe": 4}
+    highest_signal_rank = 0
+    for sig in (incident.signals if isinstance(incident.signals, list) else []):
+        if isinstance(sig, dict):
+            raw = sig.get("signal_severity")
+            if isinstance(raw, str):
+                highest_signal_rank = max(highest_signal_rank, signal_severity_rank.get(raw.strip().lower(), 0))
+
+    if highest_signal_rank >= 4:
+        return "severe"
+    if highest_signal_rank >= 2:
+        return "moderate"
+
+    # 3) Symptom volume heuristic.
+    symptom_count = len(incident.symptoms) if isinstance(incident.symptoms, list) else 0
+    if symptom_count >= 6:
+        return "severe"
+    if symptom_count >= 3:
+        return "moderate"
+
+    # 4) Last-resort fallback only.
+    if incident.expected_cause:
+        return "moderate"
+    return "low"
+
+
+def _allowed_webhook_hosts(destination: str) -> List[str]:
+    env_key = "SLACK_ALLOWED_HOSTS" if destination == "slack" else "TEAMS_ALLOWED_HOSTS"
+    raw = os.getenv(env_key, "")
+    return [h.strip().lower() for h in raw.split(",") if h.strip()]
+
+
+def _is_override_webhook_allowed(webhook_override: str, destination: str) -> bool:
+    parsed = urlparse(webhook_override)
+    if parsed.scheme.lower() != "https":
+        return False
+    if not parsed.hostname:
+        return False
+
+    host = parsed.hostname.lower()
+    if parsed.port is not None and parsed.port <= 0:
+        return False
+
+    allowed_hosts = _allowed_webhook_hosts(destination)
+    if not allowed_hosts:
+        return False
+
+    for allowed in allowed_hosts:
+        # Supports exact host and simple wildcard prefix patterns like *.slack.com
+        if allowed.startswith("*."):
+            suffix = allowed[1:]  # keep leading dot for strict suffix matching
+            if host.endswith(suffix):
+                return True
+        elif host == allowed:
+            return True
+    return False
 
 
 def _slack_payload(markdown: str, incident: Incident) -> Dict[str, Any]:
@@ -596,7 +660,14 @@ async def dispatch_postmortem(
     if destination not in {"slack", "teams"}:
         raise HTTPException(status_code=400, detail="destination must be either 'slack' or 'teams'")
 
-    webhook_url = req.webhook_override or os.getenv("SLACK_WEBHOOK_URL" if destination == "slack" else "TEAMS_WEBHOOK_URL")
+    webhook_url = os.getenv("SLACK_WEBHOOK_URL" if destination == "slack" else "TEAMS_WEBHOOK_URL")
+    if req.webhook_override:
+        if _is_override_webhook_allowed(req.webhook_override, destination):
+            webhook_url = req.webhook_override
+        else:
+            if not webhook_url:
+                raise HTTPException(status_code=400, detail=f"Invalid webhook_override for {destination}")
+
     if not webhook_url:
         raise HTTPException(status_code=400, detail=f"No webhook configured for {destination}")
 

@@ -28,7 +28,7 @@ Sentinel-SRE is a next-generation incident management platform that transforms h
 - Node.js 18+
 - Groq API Key
 
- # Backend Setup
+# Backend Setup
 1. `cd backend`
 2. `pip install -r requirements.txt`
 3. Create a `.env` file with your `GROQ_API_KEY` and optional dispatch webhooks:
