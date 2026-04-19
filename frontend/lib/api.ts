@@ -85,6 +85,13 @@ export async function fetchEvaluation() {
   return res.json();
 }
 
+/**
+ * Generate a textual postmortem for the specified incident.
+ *
+ * @param incident_id - The incident's unique identifier
+ * @returns An object containing the generated postmortem text as `postmortem`
+ * @throws Error when the server responds with a non-OK status; the error message includes the HTTP status and response text
+ */
 export async function generatePostmortem(incident_id: string): Promise<{ postmortem: string }> {
   const res = await fetch(`${API_BASE}/incidents/${incident_id}/postmortem`, {
     method: 'POST',
@@ -97,6 +104,15 @@ export async function generatePostmortem(incident_id: string): Promise<{ postmor
   return res.json();
 }
 
+/**
+ * Dispatches a generated postmortem for an incident to an external destination.
+ *
+ * @param incident_id - The ID of the incident whose postmortem will be dispatched
+ * @param destination - The target platform for dispatching the postmortem (`'slack'` or `'teams'`)
+ * @param webhook_override - Optional webhook URL to override the configured destination webhook
+ * @returns An object with `status`, `destination`, and `incident_id` describing the dispatch result
+ * @throws Error if the HTTP response is not OK; the error message includes the response status and body text
+ */
 export async function dispatchPostmortem(
   incident_id: string,
   destination: 'slack' | 'teams',
