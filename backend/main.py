@@ -400,6 +400,10 @@ def ingest_prometheus_alerts(
         service = data_list[0][0]
         alertname = data_list[0][1]
         alerts = [item[2] for item in data_list]
+        # Fingerprint format: "service::alertname::severity" — extract the
+        # severity so that existing-incident lookup is also severity-aware
+        # (otherwise two calls with different severities merge into one).
+        current_sev = fingerprint.rsplit("::", 1)[-1]
 
         open_incidents = session.exec(
             select(Incident)
@@ -410,8 +414,21 @@ def ingest_prometheus_alerts(
             .order_by(Incident.start_time.desc())
         ).all()
 
-        # Strict fingerprint matching: only append if an incident exists for same service AND metric
-        recent_incident = next((inc for inc in open_incidents if any(sig.get("metric") == alertname for sig in (inc.signals or []))), None)
+        # Strict fingerprint matching: only append if an incident exists for
+        # same service AND metric AND severity. This keeps alerts of
+        # different severity (e.g. warning→critical escalation) in separate
+        # incidents so operators can see the escalation as a new event.
+        recent_incident = next(
+            (
+                inc for inc in open_incidents
+                if any(
+                    sig.get("metric") == alertname
+                    and sig.get("signal_severity") == current_sev
+                    for sig in (inc.signals or [])
+                )
+            ),
+            None,
+        )
 
         new_symptoms = [a.annotations.get("summary", a.labels.get("alertname", "Unknown Alert")) for a in alerts]
         new_signals = [{
@@ -565,10 +582,6 @@ class SimulationRequest(BaseModel):
     failure_type: str
     severity: str
 
-
-class DispatchRequest(BaseModel):
-    destination: str
-    webhook_override: Optional[str] = None
 
 @app.post("/api/v1/simulation/trigger")
 def trigger_simulation(
