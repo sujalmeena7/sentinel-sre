@@ -10,30 +10,47 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlmodel import Session, select
 from typing import List, Dict, Any, Optional, Union
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 from datetime import datetime, timezone, timedelta
 from uuid import uuid4
 import hmac
 import hashlib
 import json
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from sqlmodel import Session, select
-from typing import List, Dict, Any, Optional, Union
-from pydantic import BaseModel
-from datetime import datetime, timezone, timedelta
-from uuid import uuid4
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 from dotenv import load_dotenv
-from models import Incident
-from database import init_db, get_session
+from models import Incident, User
+from database import init_db, get_session, engine
 from rag_engine import add_incident_to_index, query_similar_incidents, generate_hypothesis, update_incident_in_index
 from hybrid_analyzer import run_hybrid_analysis
 from data_generator import generate_deterministic_incident
+from auth_utils import (
+    hash_password,
+    verify_password,
+    create_access_token,
+    generate_webhook_token,
+    hash_webhook_token,
+    get_current_user,
+    get_user_by_webhook_token,
+)
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
-app = FastAPI(title="AI Root Cause Analyzer", version="0.2.0")
+app = FastAPI(title="AI Root Cause Analyzer", version="0.3.0")
+
+# ─── Rate limiter (in-memory, fine for single-worker Render free tier) ───
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+
+
+@app.exception_handler(RateLimitExceeded)
+def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
+    return JSONResponse(
+        status_code=429,
+        content={"detail": f"Rate limit exceeded: {exc.detail}"},
+    )
 
 # Allow frontend connections — robust CORS for production.
 # If ALLOWED_ORIGINS is unset OR contains "*", we allow all origins.
@@ -108,11 +125,160 @@ class PrometheusPayload(BaseModel):
 @app.on_event("startup")
 def on_startup():
     init_db()
+    _seed_admin_and_backfill()
+
+
+def _seed_admin_and_backfill() -> None:
+    """Idempotently create an admin user and assign orphan incidents to it.
+    - Reads ADMIN_EMAIL / ADMIN_PASSWORD from env (defaults for dev).
+    - Creates the admin if missing; updates password hash if it changed.
+    - Backfills any pre-existing incidents (user_id IS NULL) to the admin.
+    """
+    admin_email = os.getenv("ADMIN_EMAIL", "admin@sentinel.local").strip().lower()
+    admin_password = os.getenv("ADMIN_PASSWORD", "admin123")
+
+    with Session(engine) as session:
+        admin = session.exec(select(User).where(User.email == admin_email)).first()
+        if admin is None:
+            raw_webhook = generate_webhook_token()
+            admin = User(
+                email=admin_email,
+                password_hash=hash_password(admin_password),
+                webhook_token_hash=hash_webhook_token(raw_webhook),
+                role="admin",
+                name="Admin",
+            )
+            session.add(admin)
+            session.commit()
+            session.refresh(admin)
+            logger.info(f"🛡️  Admin user seeded: {admin_email}")
+            logger.info(
+                f"🔑 Admin webhook token (save this — shown once):\n   {raw_webhook}\n"
+                f"   Use it at POST /api/v1/telemetry/prometheus/{raw_webhook}"
+            )
+        else:
+            # Rotate password hash if ADMIN_PASSWORD changed in env.
+            if not verify_password(admin_password, admin.password_hash):
+                admin.password_hash = hash_password(admin_password)
+                session.add(admin)
+                session.commit()
+                logger.info("🔄 Admin password hash refreshed from env.")
+
+        # Backfill orphan incidents (created before multi-tenancy shipped).
+        orphan_count = session.exec(
+            select(Incident).where(Incident.user_id == None)  # noqa: E711
+        ).all()
+        if orphan_count:
+            for inc in orphan_count:
+                inc.user_id = admin.id
+                session.add(inc)
+            session.commit()
+            logger.info(f"🧩 Backfilled {len(orphan_count)} legacy incidents → admin.")
 
 
 @app.get("/")
 def read_root():
-    return {"status": "ok", "message": "Root Cause Analyzer API v0.2.0 — Hybrid Reasoning Engine"}
+    return {"status": "ok", "message": "Root Cause Analyzer API v0.3.0 — Multi-Tenant SaaS"}
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# AUTH ENDPOINTS (register / login / me)
+# ═══════════════════════════════════════════════════════════════════════
+
+class RegisterRequest(BaseModel):
+    email: EmailStr
+    password: str
+    name: Optional[str] = None
+
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str
+
+
+class AuthResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: Dict[str, Any]
+    # Raw webhook token — shown ONCE on register or rotate.
+    webhook_token: Optional[str] = None
+
+
+def _public_user(user: User, webhook_token: Optional[str] = None) -> Dict[str, Any]:
+    payload = {
+        "id": user.id,
+        "email": user.email,
+        "name": user.name,
+        "role": user.role,
+        "created_at": user.created_at.isoformat() if user.created_at else None,
+    }
+    return payload
+
+
+@app.post("/api/v1/auth/register", response_model=AuthResponse)
+@limiter.limit("10/minute")
+def register(request: Request, body: RegisterRequest, session: Session = Depends(get_session)):
+    email = body.email.strip().lower()
+    if len(body.password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+
+    existing = session.exec(select(User).where(User.email == email)).first()
+    if existing:
+        raise HTTPException(status_code=409, detail="An account with this email already exists")
+
+    raw_webhook = generate_webhook_token()
+    user = User(
+        email=email,
+        password_hash=hash_password(body.password),
+        webhook_token_hash=hash_webhook_token(raw_webhook),
+        name=body.name,
+        role="user",
+    )
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+
+    token = create_access_token(user.id, user.email)
+    logger.info(f"🆕 User registered: {email}")
+    return AuthResponse(
+        access_token=token,
+        user=_public_user(user),
+        webhook_token=raw_webhook,
+    )
+
+
+@app.post("/api/v1/auth/login", response_model=AuthResponse)
+@limiter.limit("20/minute")
+def login(request: Request, body: LoginRequest, session: Session = Depends(get_session)):
+    email = body.email.strip().lower()
+    user = session.exec(select(User).where(User.email == email)).first()
+    if not user or not verify_password(body.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    token = create_access_token(user.id, user.email)
+    logger.info(f"🔓 Login: {email}")
+    return AuthResponse(access_token=token, user=_public_user(user))
+
+
+@app.get("/api/v1/auth/me")
+def read_me(current_user: User = Depends(get_current_user)):
+    return _public_user(current_user)
+
+
+@app.post("/api/v1/auth/rotate-webhook-token", response_model=AuthResponse)
+def rotate_webhook_token(
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    """Generate a fresh webhook token for the calling user. Raw value is
+    returned exactly once in the response."""
+    raw = generate_webhook_token()
+    current_user.webhook_token_hash = hash_webhook_token(raw)
+    session.add(current_user)
+    session.commit()
+    session.refresh(current_user)
+    token = create_access_token(current_user.id, current_user.email)
+    return AuthResponse(access_token=token, user=_public_user(current_user), webhook_token=raw)
 
 
 def process_incident_background(incident: Incident):
@@ -129,10 +295,13 @@ def ingest_incident(
     payload: IncidentIngest,
     background_tasks: BackgroundTasks,
     session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ):
-    """Ingest an incident payload. Triggers vector embedding in the background."""
+    """Ingest an incident payload. Scoped to the authenticated tenant.
+    Triggers vector embedding in the background."""
     incident = Incident(
         id=payload.id or str(uuid4()),
+        user_id=current_user.id,
         service=payload.service,
         environment=payload.environment,
         start_time=parse_dt(payload.start_time) or datetime.now(timezone.utc),
@@ -155,28 +324,39 @@ def ingest_incident(
     return {"status": "accepted", "incident_id": str(incident.id)}
 
 
-@app.post("/api/v1/telemetry/prometheus", response_model=Dict[str, Any])
+@app.post("/api/v1/telemetry/prometheus/{webhook_token}", response_model=Dict[str, Any])
+@limiter.limit("120/minute")
 def ingest_prometheus_alerts(
+    request: Request,
+    webhook_token: str,
     payload: PrometheusPayload,
     background_tasks: BackgroundTasks,
     session: Session = Depends(get_session),
-    token: str = Depends(verify_telemetry_token)
 ):
-    """Ingest real-time Prometheus alerts and bind them to our AI pipeline."""
-    logger.info(f"📡 Received Prometheus webhook with {len(payload.alerts)} alerts")
-    
+    """Ingest real-time Prometheus alerts — scoped to a single tenant via
+    their unique webhook_token in the URL path.
+
+    Rate-limited to 120 req/min per client IP to prevent abuse.
+    The token is never stored in plaintext; only its SHA-256 hash.
+    """
+    owner = get_user_by_webhook_token(webhook_token, session)
+    if not owner:
+        raise HTTPException(status_code=401, detail="Invalid webhook token")
+
+    logger.info(f"📡 Prometheus webhook for user={owner.email} with {len(payload.alerts)} alerts")
+
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(minutes=15)
     processed = []
-    
+
     firing_alerts_by_fingerprint = {}
     resolved_alerts = []
-    
+
     # 1. Parse and categorize alerts
     for alert in payload.alerts:
         service = alert.labels.get("service") or alert.labels.get("job") or "unknown-service"
         alertname = alert.labels.get("alertname", "unknown")
-        
+
         # 2. Map severities to our internal model
         raw_sev = alert.labels.get("severity", "unknown").lower()
         if raw_sev in ["critical", "fatal", "page", "emergency"]:
@@ -185,10 +365,12 @@ def ingest_prometheus_alerts(
             sev = "moderate"
         else:
             sev = "low"
-            
+
         alert.labels["mapped_severity"] = sev
-        fingerprint = f"{service}::{alertname}"
-        
+        # Fingerprint includes service + alertname + mapped severity so
+        # alerts of different severity aren't incorrectly grouped.
+        fingerprint = f"{service}::{alertname}::{sev}"
+
         if alert.status == "resolved":
             resolved_alerts.append((service, alertname))
         else:
@@ -196,12 +378,13 @@ def ingest_prometheus_alerts(
                 firing_alerts_by_fingerprint[fingerprint] = []
             firing_alerts_by_fingerprint[fingerprint].append((service, alertname, alert))
 
-    # 3. Handle resolved alerts to close incidents
+    # 3. Handle resolved alerts to close incidents — tenant-scoped
     for service, alertname in resolved_alerts:
         open_incidents = session.exec(
             select(Incident)
+            .where(Incident.user_id == owner.id)
             .where(Incident.service == service)
-            .where(Incident.resolved_time == None)
+            .where(Incident.resolved_time == None)  # noqa: E711
         ).all()
         for inc in open_incidents:
             has_alert = any(sig.get("metric") == alertname for sig in (inc.signals or []))
@@ -212,42 +395,43 @@ def ingest_prometheus_alerts(
                 logger.info(f"✅ Resolved incident {inc.id} for {service} due to resolved alert")
     session.commit()
 
-    # 4. Handle firing alerts with fingerprint deduplication
+    # 4. Handle firing alerts with fingerprint deduplication — tenant-scoped
     for fingerprint, data_list in firing_alerts_by_fingerprint.items():
         service = data_list[0][0]
         alertname = data_list[0][1]
         alerts = [item[2] for item in data_list]
-        
+
         open_incidents = session.exec(
             select(Incident)
+            .where(Incident.user_id == owner.id)
             .where(Incident.service == service)
-            .where(Incident.resolved_time == None)
+            .where(Incident.resolved_time == None)  # noqa: E711
             .where(Incident.start_time >= cutoff)
             .order_by(Incident.start_time.desc())
         ).all()
-        
+
         # Strict fingerprint matching: only append if an incident exists for same service AND metric
         recent_incident = next((inc for inc in open_incidents if any(sig.get("metric") == alertname for sig in (inc.signals or []))), None)
-        
+
         new_symptoms = [a.annotations.get("summary", a.labels.get("alertname", "Unknown Alert")) for a in alerts]
         new_signals = [{
-            "metric": a.labels.get("alertname", "alert"), 
-            "log": a.annotations.get("description", ""), 
-            "status": a.status, 
+            "metric": a.labels.get("alertname", "alert"),
+            "log": a.annotations.get("description", ""),
+            "status": a.status,
             "signal_severity": a.labels.get("mapped_severity", "low")
         } for a in alerts]
-        
+
         if recent_incident:
             current_symptoms = list(recent_incident.symptoms) if recent_incident.symptoms else []
             for s in new_symptoms:
                 if s not in current_symptoms:
                     current_symptoms.append(s)
             recent_incident.symptoms = current_symptoms
-            
+
             current_signals = list(recent_incident.signals) if recent_incident.signals else []
             current_signals.extend(new_signals)
             recent_incident.signals = current_signals
-            
+
             session.add(recent_incident)
             session.commit()
             processed.append(str(recent_incident.id))
@@ -256,6 +440,7 @@ def ingest_prometheus_alerts(
             env = alerts[0].labels.get("environment", "production")
             incident = Incident(
                 id=str(uuid4()),
+                user_id=owner.id,
                 service=service,
                 environment=env,
                 start_time=now,
@@ -268,7 +453,7 @@ def ingest_prometheus_alerts(
             background_tasks.add_task(process_incident_background, incident)
             processed.append(str(incident.id))
             logger.info(f"🚨 Created new incident {incident.id} for fingerprint {fingerprint}")
-            
+
     return {"status": "accepted", "incidents_processed": processed}
 
 
@@ -280,18 +465,31 @@ class AnalyzeRequest(BaseModel):
 
 
 @app.post("/api/v1/incidents/analyze")
-async def analyze_anomaly(req: AnalyzeRequest, session: Session = Depends(get_session)):
+async def analyze_anomaly(
+    req: AnalyzeRequest,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     import traceback
     from fastapi.responses import JSONResponse
     try:
         """
-        HYBRID analysis pipeline:
+        HYBRID analysis pipeline — tenant-scoped.
         """
         incident = session.get(Incident, req.incident_id)
-        service_name = incident.service if incident else "unknown"
-        
+        if not incident or (incident.user_id and incident.user_id != current_user.id):
+            raise HTTPException(status_code=404, detail="Incident not found")
+        service_name = incident.service
+
         # Run the heavy blocking hybrid analysis in a threadpool to prevent UI lockup
-        result = await asyncio.to_thread(run_hybrid_analysis, service_name, req.symptoms, req.signals, req.changes)
+        result = await asyncio.to_thread(
+            run_hybrid_analysis,
+            service_name,
+            req.symptoms,
+            req.signals,
+            req.changes,
+            current_user.id,
+        )
 
         # Evaluation Tracker
         incident = session.get(Incident, req.incident_id)
@@ -312,6 +510,8 @@ async def analyze_anomaly(req: AnalyzeRequest, session: Session = Depends(get_se
             "analysis_breakdown": result.analysis_breakdown,
             "rejected_hypotheses": result.rejected_hypotheses,
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Analysis failed: {traceback.format_exc()}")
         return JSONResponse(status_code=500, content={"detail": traceback.format_exc()})
@@ -327,30 +527,35 @@ class DispatchRequest(BaseModel):
     webhook_override: Optional[str] = None
 
 @app.post("/api/v1/incidents/feedback")
-def submit_feedback(req: FeedbackRequest, background_tasks: BackgroundTasks, session: Session = Depends(get_session)):
+def submit_feedback(
+    req: FeedbackRequest,
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     from fastapi import HTTPException
     incident = session.get(Incident, req.incident_id)
-    if not incident:
+    if not incident or (incident.user_id and incident.user_id != current_user.id):
         raise HTTPException(status_code=404, detail="Incident not found")
-        
+
     if incident.human_feedback_score is None:
         incident.human_feedback_score = 0
     if incident.human_feedback_count is None:
         incident.human_feedback_count = 0
-        
+
     incident.human_feedback_score += req.score
     incident.human_feedback_count += 1
     # Maintain the latest comment
     if req.comment:
         incident.human_feedback_comment = req.comment
-        
+
     session.add(incident)
     session.commit()
     session.refresh(incident)
-    
+
     # Re-index with feedback context!
     background_tasks.add_task(update_incident_in_index, incident)
-    
+
     logger.info(f"👍👎 Feedback received for {req.incident_id}. Score: {req.score}")
     return {"status": "success", "message": "Feedback recorded and RAG trained"}
 
@@ -366,11 +571,16 @@ class DispatchRequest(BaseModel):
     webhook_override: Optional[str] = None
 
 @app.post("/api/v1/simulation/trigger")
-def trigger_simulation(req: SimulationRequest, background_tasks: BackgroundTasks, session: Session = Depends(get_session)):
-    logger.info(f"⚡ Chaos trigger received: service={req.service}, failure={req.failure_type}, severity={req.severity}")
+def trigger_simulation(
+    req: SimulationRequest,
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    logger.info(f"⚡ Chaos trigger received: service={req.service}, failure={req.failure_type}, severity={req.severity} by {current_user.email}")
     try:
         inc_data = generate_deterministic_incident(req.service, req.failure_type, req.severity)
-        
+
         EXPECTED_MAP = {
             "Memory leak (OOM Kill)": "Memory Leak",
             "CPU spike": "CPU Saturation",
@@ -378,7 +588,8 @@ def trigger_simulation(req: SimulationRequest, background_tasks: BackgroundTasks
             "Latency spike": "Downstream Dependency Overload"
         }
         inc_data["expected_cause"] = EXPECTED_MAP.get(req.failure_type, "Unknown Pattern")
-        
+        inc_data["user_id"] = current_user.id
+
         incident = Incident(**inc_data)
         session.add(incident)
         session.commit()
@@ -393,15 +604,30 @@ def trigger_simulation(req: SimulationRequest, background_tasks: BackgroundTasks
 
 
 @app.get("/api/v1/incidents", response_model=List[Incident])
-def get_incidents(session: Session = Depends(get_session)):
-    incidents = session.exec(select(Incident).order_by(Incident.start_time.desc())).all()
+def get_incidents(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    incidents = session.exec(
+        select(Incident)
+        .where(Incident.user_id == current_user.id)
+        .order_by(Incident.start_time.desc())
+    ).all()
     return incidents
 
 
 @app.get("/api/v1/evaluation")
-def get_evaluation(session: Session = Depends(get_session)):
-    incidents = session.exec(select(Incident).where(Incident.expected_cause != None).where(Incident.predicted_cause != None)).all()
-    
+def get_evaluation(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    incidents = session.exec(
+        select(Incident)
+        .where(Incident.user_id == current_user.id)
+        .where(Incident.expected_cause != None)  # noqa: E711
+        .where(Incident.predicted_cause != None)  # noqa: E711
+    ).all()
+
     total = len(incidents)
     correct = sum(1 for i in incidents if i.is_correct)
     accuracy = round((correct / total * 100), 1) if total > 0 else 0.0
@@ -688,7 +914,7 @@ async def _generate_postmortem_markdown(incident_id: str, session: Session) -> s
     reasoning_summary = ""
     try:
         result = await asyncio.to_thread(
-            run_hybrid_analysis, service, incident.symptoms, incident.signals, incident.changes
+            run_hybrid_analysis, service, incident.symptoms, incident.signals, incident.changes, incident.user_id
         )
         hypotheses_text = "\n".join(
             [f"  {i+1}. {h.title} (Confidence: {h.confidence}%) — {h.description}"
@@ -837,8 +1063,15 @@ Constraints:
 
 
 @app.post("/api/v1/incidents/{incident_id}/postmortem")
-async def generate_postmortem(incident_id: str, session: Session = Depends(get_session)):
+async def generate_postmortem(
+    incident_id: str,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     import traceback
+    incident = session.get(Incident, incident_id)
+    if not incident or (incident.user_id and incident.user_id != current_user.id):
+        raise HTTPException(status_code=404, detail="Incident not found")
     try:
         markdown = await _generate_postmortem_markdown(incident_id, session)
         return {"postmortem": markdown}
@@ -854,9 +1087,10 @@ async def dispatch_postmortem(
     incident_id: str,
     req: DispatchRequest,
     session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ):
     incident = session.get(Incident, incident_id)
-    if not incident:
+    if not incident or (incident.user_id and incident.user_id != current_user.id):
         raise HTTPException(status_code=404, detail="Incident not found")
 
     destination = (req.destination or "").strip().lower()
@@ -1037,10 +1271,14 @@ class SimulateSlackAction(BaseModel):
 
 
 @app.post("/api/v1/slack/simulate")
-def simulate_slack_action(req: SimulateSlackAction, session: Session = Depends(get_session)):
+def simulate_slack_action(
+    req: SimulateSlackAction,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     """Simulate a Slack interactive action locally (no ngrok needed)."""
     incident = session.get(Incident, req.incident_id)
-    if not incident:
+    if not incident or (incident.user_id and incident.user_id != current_user.id):
         raise HTTPException(status_code=404, detail="Incident not found")
 
     now = datetime.now(timezone.utc)
@@ -1098,8 +1336,19 @@ class ChatOpsLogEntry(BaseModel):
 
 
 @app.get("/api/v1/chatops/logs")
-def get_chatops_logs(incident_id: Optional[str] = None):
-    """Return ChatOps activity logs, optionally filtered by incident_id."""
+def get_chatops_logs(
+    incident_id: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    """Return ChatOps activity logs for the calling tenant's incidents only."""
+    # Build the set of incident IDs owned by this user.
+    owned_ids = {
+        i.id for i in session.exec(
+            select(Incident).where(Incident.user_id == current_user.id)
+        ).all()
+    }
+    entries = [e for e in chatops_activity_log if e["incident_id"] in owned_ids]
     if incident_id:
-        return [e for e in chatops_activity_log if e["incident_id"] == incident_id]
-    return chatops_activity_log
+        entries = [e for e in entries if e["incident_id"] == incident_id]
+    return entries

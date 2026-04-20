@@ -1,80 +1,125 @@
 # Sentinel-SRE — PRD & Work Log
 
 ## Original Problem Statement
-User (repo: https://github.com/sujalmeena7/sentinel-sre) reported that the
-deployed app (Vercel frontend + Render backend) returns `Analysis failed: 502 -`
-when clicking **Run Analysis** on an incident. Works locally.
+Single-user RCA platform at https://github.com/sujalmeena7/sentinel-sre
+transformed into a multi-tenant SaaS with email+password auth and
+per-tenant data isolation.
 
 ## Architecture
-- Frontend: Next.js 14 on Vercel — `sentinel-sre-zeta.vercel.app`
-- Backend: FastAPI on Render — `sentinel-backend-box9.onrender.com`
-- Storage: PostgreSQL + ChromaDB (vector store)
+- Frontend: Next.js 14 App Router on Vercel — `sentinel-sre-zeta.vercel.app`
+- Backend: FastAPI (gunicorn + uvicorn on Render)
+- Storage: SQLite locally / PostgreSQL on Render (`DATABASE_URL`)
+- Vector store: ChromaDB (on-disk) with metadata filtering for tenant isolation
 - LLMs: Groq (`llama-3.3-70b-versatile`) primary, OpenAI fallback
-- Both Vercel and Render on **free tier**
+- Auth: bcrypt + PyJWT (HS256 Bearer tokens in localStorage)
+- Rate limit: slowapi in-memory (single-worker Render free tier)
 
-## Root Cause (diagnosed 2026-04-20)
-1. **PRIMARY** — `backend/Procfile` used `gunicorn -w 4 -k uvicorn.workers.UvicornWorker`
-   with **no `--timeout` flag** → default is **30s**. The hybrid analysis
-   (Rules + Anomaly + OpenAI embeddings + ChromaDB + Groq LLM) regularly
-   exceeds 30s, so gunicorn killed the worker mid-request → Render returned
-   `502` with empty body. Reproduced via direct `curl POST` to the backend:
-   502 in ~28s, `x-render-origin-server: Render` (not uvicorn).
-2. **SECONDARY** — `ALLOWED_ORIGINS` env var on Render did not include the
-   Vercel domain; preflight returned `Disallowed CORS origin`. This would
-   have blocked direct browser → Render calls once we bypass the Vercel proxy.
-3. **TERTIARY** — `-w 4` workers on Render free tier (512MB RAM) with
-   ChromaDB + LlamaIndex per worker risked OOM.
-4. **TERTIARY** — Vercel Edge rewrite proxy (`next.config.mjs`) has its own
-   ~30s timeout, which would hit anyway if backend slowed down.
+## Features Shipped
 
-## Fixes Applied (2026-04-20)
+### Session 1 — 2026-04-20 (bug fix)
+- Fixed `Analysis failed: 502 -` on deployed Render backend (gunicorn
+  default 30s worker timeout → LLM call killed). Procfile now pins
+  `--timeout 180`, 1 worker, `--keep-alive 75`.
+- Hardened CORS parsing in main.py.
+- Frontend `NEXT_PUBLIC_BACKEND_URL` support — production calls bypass
+  Vercel Edge proxy (~30s timeout).
+- Render cold-start warm-up ping on incident detail mount.
 
-### Backend
-- `backend/Procfile`: reduced to 1 worker, set `--timeout 180 --graceful-timeout 30 --keep-alive 75`.
-- `backend/main.py`: hardened CORS parsing — empty/missing `ALLOWED_ORIGINS`
-  now cleanly falls back to `["*"]` instead of `[""]`, plus logs the
-  resolved origin list at startup.
+### Session 2 — 2026-04-20 (multi-tenant SaaS upgrade)
 
-### Frontend
-- `frontend/lib/api.ts`: added `NEXT_PUBLIC_BACKEND_URL` support — when set,
-  all API calls go **directly** to the Render backend, bypassing the Vercel
-  Edge proxy timeout. Falls back to the old relative `/api/v1` path for
-  local dev.
-- `frontend/lib/api.ts`: added `warmBackend()` — a fire-and-forget GET to
-  `/` that wakes the Render free-tier dyno on page load, so the first
-  "Run Analysis" click doesn't eat a cold start.
-- `frontend/lib/api.ts`: clearer error message on `502 + empty body`
-  (the mysterious `Analysis failed: 502 -`) so users know to retry.
-- `frontend/components/IncidentDetail.tsx`: calls `warmBackend()` on mount.
-- `frontend/.env.local.example`: documented the new env var.
+#### Backend
+- `auth_utils.py`: bcrypt hashing, PyJWT `HS256` access tokens (24h TTL),
+  `secrets.token_urlsafe(32)` webhook tokens stored only as SHA-256
+  hashes, `get_current_user` FastAPI dependency.
+- `models.py`: new `User` table (id, email, password_hash,
+  webhook_token_hash, created_at, name, role). `Incident.user_id` FK.
+- `database.py`: idempotent column migration (adds `user_id` on legacy
+  DBs). On startup, `_seed_admin_and_backfill()` creates the admin user
+  from `ADMIN_EMAIL`/`ADMIN_PASSWORD` and assigns orphan incidents to it.
+- `main.py`:
+  - `POST /api/v1/auth/register` (rate-limited 10/min) → returns JWT +
+    webhook_token (shown exactly once).
+  - `POST /api/v1/auth/login` (rate-limited 20/min) → returns JWT.
+  - `GET /api/v1/auth/me` → current user.
+  - `POST /api/v1/auth/rotate-webhook-token` → regenerates token.
+  - Every dashboard endpoint (`/incidents`, `/incidents/analyze`,
+    `/incidents/feedback`, `/simulation/trigger`, `/evaluation`,
+    `/incidents/{id}/postmortem`, `/incidents/{id}/dispatch`,
+    `/slack/simulate`, `/chatops/logs`) now requires `get_current_user`
+    and filters rows by `user_id == current_user.id`.
+  - Webhook ingestion moved to `POST /api/v1/telemetry/prometheus/{token}`.
+    Token is hashed (SHA-256) and looked up by hash. Rate-limited
+    120/min per client IP. Fingerprint now includes
+    `service::alertname::severity` for correct grouping.
+- `rag_engine.py`: `add_incident_to_index()` writes `user_id` into
+  ChromaDB metadata. `query_similar_incidents()` MANDATORILY filters by
+  `user_id` (fail-closed if missing) plus a post-filter defense-in-depth.
+- `hybrid_analyzer.py`: threads `user_id` through to the RAG layer.
+
+#### Frontend
+- `contexts/AuthContext.tsx`: `AuthProvider` (React Context + localStorage
+  persistence), `login` / `register` / `logout` / `rotateWebhookToken`
+  methods, `readAuthToken()` + `forceLogoutOn401()` helpers for
+  non-React modules.
+- `components/ProtectedRoute.tsx`: client-side guard. Shows a spinner
+  during hydration, redirects to `/login` if not authenticated.
+- `components/UserMenu.tsx`: profile dropdown with user email +
+  "Rotate webhook token" + "Sign out". Post-rotate modal displays the
+  new token exactly once with a copy-to-clipboard button.
+- `app/login/page.tsx` + `app/register/page.tsx`: dark glassmorphism UI
+  matching the landing page. Register success shows the Prometheus
+  ingestion URL hint with the new tenant's webhook token.
+- `app/dashboard/layout.tsx`: wraps in `<ProtectedRoute>` and renders a
+  top bar with brand + `<UserMenu>`.
+- `app/layout.tsx`: wraps the entire app in `<AuthProvider>`.
+- `lib/api.ts`: new `authFetch` wrapper auto-injects Bearer JWT and
+  calls `forceLogoutOn401()` on 401 for non-auth routes. All 9 existing
+  API calls migrated to `authFetch`.
+- Landing page nav: "Sign in" → `/login`, "Launch Dashboard" → `/register`.
+
+## Security Choices
+- Passwords stored as bcrypt hashes.
+- JWTs signed HS256, 24h TTL, secret from `JWT_SECRET` env.
+- Webhook tokens shown ONCE, stored only as SHA-256 hashes.
+- Rate limiting on auth + webhook endpoints to prevent brute force / abuse.
+- Strict `user_id` filter in SQL + ChromaDB + post-filter defense.
+- No plaintext secrets in code; dev-only fallbacks flagged as insecure.
 
 ## Required User Actions on Deployed Infra
-1. **On Render** (backend service):
-   - Set env var `ALLOWED_ORIGINS=*` (or specifically include the Vercel
-     URL: `https://sentinel-sre-zeta.vercel.app`).
-   - Commit the updated `Procfile` and redeploy.
-2. **On Vercel** (frontend project):
-   - Add env var `NEXT_PUBLIC_BACKEND_URL=https://sentinel-backend-box9.onrender.com`.
-   - Trigger a redeploy.
+1. **Render (backend)** — add env vars:
+   - `JWT_SECRET=<random 32+ char string>`
+   - `ADMIN_EMAIL=you@yourcompany.com`
+   - `ADMIN_PASSWORD=<strong password>`
+   - `ALLOWED_ORIGINS=https://<your-vercel-app>.vercel.app`
+   - `DATABASE_URL=<postgres>`
+   - Existing: `GROQ_API_KEY`, `OPENAI_API_KEY`
+   Then redeploy — the admin is seeded on first boot; check logs for the
+   one-time webhook token print.
+2. **Vercel (frontend)** — add/keep:
+   - `NEXT_PUBLIC_BACKEND_URL=https://<render>.onrender.com`
+3. **Update Prometheus/Alertmanager configs** to use the new per-user
+   path: `POST /api/v1/telemetry/prometheus/<your-webhook-token>`.
 
 ## Status
-- ✅ Primary 502 root cause identified (gunicorn 30s worker timeout).
-- ✅ Backend Procfile fixed (180s timeout, 1 worker).
-- ✅ CORS hardened in `main.py`.
-- ✅ Frontend now bypasses Vercel Edge proxy in production.
-- ✅ Render cold-start warm-up added.
-- ⏳ End-to-end verification requires user to redeploy both services and
-  set the env vars listed above.
+- ✅ Backend: unit-tested via FastAPI TestClient (register, login, isolation,
+  webhook token auth, rate limits, JWT protection).
+- ✅ Frontend: production `next build` clean, TypeScript no errors,
+  end-to-end UI flow verified (register → token reveal → dashboard
+  shows empty list for new tenant).
+- ✅ Admin seeded idempotently from env on startup.
+- ✅ Legacy incidents auto-assigned to admin on first boot.
 
 ## Next Action Items
-- User pushes these changes to GitHub (via "Save to GitHub" button).
-- User updates env vars on Render and Vercel and redeploys.
-- Confirm `Run Analysis` succeeds on the deployed `sentinel-sre-zeta.vercel.app`.
-- Optional Phase 2: convert `/incidents/analyze` to an async job + polling
-  pattern for extra robustness against cold starts (tracked as P1).
+- Push via "Save to GitHub" button.
+- Set env vars on Render (`JWT_SECRET`, `ADMIN_*`, `ALLOWED_ORIGINS`).
+- Set env var on Vercel (`NEXT_PUBLIC_BACKEND_URL`).
+- Update Prometheus configs with per-user webhook URLs.
 
-## Backlog
-- P1: Async job + polling for `/incidents/analyze` and `/postmortem`.
-- P2: Add `/api/v1/healthz` endpoint used by the warm-up pinger.
-- P2: Cron-based Render keep-alive (external uptime monitor) to avoid
-  cold starts entirely.
+## Backlog / Future
+- P1: Password reset flow (email-based).
+- P1: Async job + polling for `/incidents/analyze` (removes remaining
+  cold-start pain entirely).
+- P2: Redis-backed rate limiter when we scale past 1 worker.
+- P2: Admin-only "view all tenants" dashboard.
+- P2: Per-user API keys for programmatic access (distinct from webhook).
+- P3: Team/workspace sharing of incidents within a tenant.

@@ -1,0 +1,50 @@
+{
+  "summary": "Backend-only test run for Sentinel-SRE multi-tenant SaaS. 18/19 tests passing. One real backend bug found: cross-request Prometheus webhook dedup does not consider severity, so alerts with same service+alertname but different severities get merged into a single incident (violates requirement).",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/v1/telemetry/prometheus/{token}",
+        "issue": "Fingerprint dedup bug: within a single payload alerts are correctly bucketed by service::alertname::severity, but when looking up an existing open incident to append to, the code at main.py:414 only matches on service+alertname (metric), ignoring severity. Result: two webhook calls for (orders-svc, HighCPU, critical) then (orders-svc, HighCPU, warning) produce ONE incident instead of two. Fix: extend the `recent_incident = next(...)` filter to also compare `sig.get('signal_severity') == sev`.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_multitenant_backend.py",
+    "/app/test_reports/pytest/pytest_results_part1.xml",
+    "/app/test_reports/pytest/pytest_results_ratelimit.xml"
+  ],
+  "action_items": [
+    "Fix severity-aware dedup in /api/v1/telemetry/prometheus ingest: update the `recent_incident` lookup (main.py ~line 414) to also match `signal_severity` so different-severity alerts don't get merged into one incident.",
+    "Consider documenting that register/login emails are lowercased server-side (email with uppercase letters returns user.email in lowercase)."
+  ],
+  "critical_code_review_comments": [
+    "main.py line 414: the fingerprint dedup logic is inconsistent. New incidents are bucketed using `service::alertname::mapped_severity` but the existing-incident lookup ignores severity — this is the root cause of the failing fingerprint test.",
+    "main.py has 1355 lines — exceeds the 700-line guideline. Split into routers (auth_router, incidents_router, telemetry_router, chatops_router) and service modules for postmortem/dispatch formatting.",
+    "Duplicate `DispatchRequest` class defined twice (lines 525-527 and 569-571). Remove the duplicate.",
+    "`chatops_activity_log` is a process-global in-memory list (line 1327). In a multi-worker deployment this will desync and silently drop events. Persist ChatOps log to DB.",
+    "`_seed_admin_and_backfill` assigns ALL orphan incidents to the configured ADMIN_EMAIL user on every startup — fine for migration but leaves a footgun if ADMIN_EMAIL is ever changed in env (a future admin could accidentally inherit legacy data). Consider running the backfill only once via a migration flag.",
+    "Admin login with env `ADMIN_PASSWORD` works, but the admin webhook token printed at startup is visible in server logs only — acceptable for dev, but a production deployment should stream this once to stdout and never again.",
+    "Several business endpoints call `run_hybrid_analysis` synchronously inside postmortem generation; OK because wrapped in `asyncio.to_thread`, but note this can block if Chroma is slow.",
+    "Rate limit is keyed on `get_remote_address` (client IP). Behind a proxy/load balancer without trusted-proxy config this all collapses to the proxy IP — per-user limiting won't work. Consider keying by user_id where authenticated."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_multitenant_backend.py (new)"
+  ],
+  "success_rate": {
+    "backend": "94.7% (18/19 tests passing)",
+    "frontend": "N/A (not tested per request)"
+  },
+  "test_credentials": "Admin seeded by startup: admin@sentinel.local / admin12345 (from env). Tests create TEST_ prefixed users at example.com.",
+  "seed_data_creation": "Several TEST_ prefixed users and incidents created in /app/backend/incidents.db. Main agent will clean up per instruction.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend is started manually (not via supervisor) because supervisor points to a different default app. Start command: `cd /app/backend && JWT_SECRET=a-32-char-test-secret-for-testing-1234 DATABASE_URL=sqlite:///./incidents.db ALLOWED_ORIGINS='*' ADMIN_EMAIL=admin@sentinel.local ADMIN_PASSWORD=admin12345 nohup uvicorn main:app --host 0.0.0.0 --port 8001 > /tmp/backend.log 2>&1 &`. Always delete incidents.db and chroma_db and restart before running rate-limit tests (slowapi state is in-memory). Tests run as two invocations: the main suite excluding TestRateLimit (to keep quota available), then TestRateLimit alone. Email must be a public TLD (example.com) — email-validator rejects `.local`. Backend lowercases emails on register.",
+  "rca of the issue": "Webhook dedup bug RCA — reproduction: (1) POST to /api/v1/telemetry/prometheus/{token} with alert {service=orders-svc, alertname=HighCPU, severity=critical}; (2) POST again with severity=warning. Expected: two incidents (different fingerprints orders-svc::HighCPU::severe vs ::moderate). Actual: one incident, second call returns the same incident_id. Root cause: main.py line 414 `recent_incident = next((inc for inc in open_incidents if any(sig.get('metric') == alertname ...)))` — the severity (`sig['signal_severity']`) is stored on the signal record but not used in the lookup filter. Mitigation: change the predicate to `sig.get('metric') == alertname and sig.get('signal_severity') == sev`. Also consider storing a denormalized `fingerprint` column on Incident and matching on that for clarity."
+}

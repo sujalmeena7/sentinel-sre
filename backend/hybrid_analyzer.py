@@ -68,9 +68,12 @@ def run_hybrid_analysis(
     symptoms: List[str],
     signals: List[Any],
     changes: List[Any] = None,
+    user_id: str = None,
 ) -> HybridAnalysisResult:
     """
-    Execute the full hybrid reasoning pipeline.
+    Execute the full hybrid reasoning pipeline for a specific tenant.
+    user_id is MANDATORY at the RAG layer for isolation; callers in
+    multi-tenant mode must always pass it.
     Returns a comprehensive analysis result with ranked hypotheses.
     """
     changes = changes or []
@@ -134,7 +137,7 @@ def run_hybrid_analysis(
 
     # ─── STEP 3: RAG Retrieval ───────────────────────────────────
     reasoning_chain.append("🔍 Step 3: Querying ChromaDB for similar past incidents via Metadata Routing...")
-    positives, negatives, unrated = query_similar_incidents(service_name, symptoms, signals)
+    positives, negatives, unrated = query_similar_incidents(service_name, symptoms, signals, user_id=user_id)
     similar_incidents = positives + unrated + negatives  # Flattened for simple keyword matching backwards compatibility
     reasoning_chain.append(f"  → RAG retrieved {len(positives)} positive, {len(negatives)} negative, and {len(unrated)} unrated historic examples.")
 

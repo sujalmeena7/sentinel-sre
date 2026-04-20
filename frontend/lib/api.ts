@@ -12,6 +12,8 @@
 // CORS: the backend already allows `*` origins with credentials off,
 // so direct browser → Render calls work without any server changes.
 // ─────────────────────────────────────────────────────────────
+import { readAuthToken, forceLogoutOn401 } from '@/contexts/AuthContext';
+
 const RAW_BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || '').trim().replace(/\/+$/, '');
 const API_BASE = RAW_BACKEND_URL ? `${RAW_BACKEND_URL}/api/v1` : '/api/v1';
 
@@ -24,6 +26,28 @@ export function warmBackend(): void {
   // Non-blocking, no-await — any response (200/404/etc.) wakes the dyno.
   fetch(`${RAW_BACKEND_URL}/`, { method: 'GET', cache: 'no-store', keepalive: true })
     .catch(() => { /* silent */ });
+}
+
+// ─────────────────────────────────────────────────────────────
+// Authenticated fetch wrapper
+// ─────────────────────────────────────────────────────────────
+// Automatically injects the Bearer JWT from localStorage on every call,
+// and on a 401 clears the session + redirects to /login so the user
+// never sees a stale "something went wrong" state from an expired token.
+async function authFetch(input: string, init: RequestInit = {}): Promise<Response> {
+  const token = readAuthToken();
+  const headers = new Headers(init.headers || {});
+  if (token && !headers.has('Authorization')) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+  const res = await fetch(input, { ...init, headers });
+  if (res.status === 401) {
+    // Don't force-logout on the auth routes themselves (login/register
+    // expect 401 on wrong password and should render their own error).
+    const isAuthRoute = input.includes('/auth/login') || input.includes('/auth/register');
+    if (!isAuthRoute) forceLogoutOn401();
+  }
+  return res;
 }
 
 export interface Incident {
@@ -63,7 +87,7 @@ export interface AnalysisResult {
 }
 
 export async function fetchIncidents(): Promise<Incident[]> {
-  const res = await fetch(`${API_BASE}/incidents`, { cache: 'no-store' });
+  const res = await authFetch(`${API_BASE}/incidents`, { cache: 'no-store' });
   if (!res.ok) throw new Error('Failed to fetch incidents');
   return res.json();
 }
@@ -75,7 +99,7 @@ export async function analyzeIncident(
 ): Promise<AnalysisResult> {
   let res: Response;
   try {
-    res = await fetch(`${API_BASE}/incidents/analyze`, {
+    res = await authFetch(`${API_BASE}/incidents/analyze`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ incident_id, symptoms, signals }),
@@ -103,7 +127,7 @@ export async function analyzeIncident(
 }
 
 export async function submitFeedback(incident_id: string, score: number, comment?: string) {
-  const res = await fetch(`${API_BASE}/incidents/feedback`, {
+  const res = await authFetch(`${API_BASE}/incidents/feedback`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ incident_id, score, comment }),
@@ -116,7 +140,7 @@ export async function submitFeedback(incident_id: string, score: number, comment
 }
 
 export async function ingestIncident(incident: Partial<Incident>) {
-  const res = await fetch(`${API_BASE}/incidents/ingest`, {
+  const res = await authFetch(`${API_BASE}/incidents/ingest`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(incident),
@@ -126,7 +150,7 @@ export async function ingestIncident(incident: Partial<Incident>) {
 }
 
 export async function triggerSimulation(service: string, failure_type: string, severity: string) {
-  const res = await fetch(`${API_BASE}/simulation/trigger`, {
+  const res = await authFetch(`${API_BASE}/simulation/trigger`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ service, failure_type, severity }),
@@ -136,13 +160,13 @@ export async function triggerSimulation(service: string, failure_type: string, s
 }
 
 export async function fetchEvaluation() {
-  const res = await fetch(`${API_BASE}/evaluation`, { cache: 'no-store' });
+  const res = await authFetch(`${API_BASE}/evaluation`, { cache: 'no-store' });
   if (!res.ok) throw new Error('Failed to fetch evaluation metrics');
   return res.json();
 }
 
 export async function generatePostmortem(incident_id: string): Promise<{ postmortem: string }> {
-  const res = await fetch(`${API_BASE}/incidents/${incident_id}/postmortem`, {
+  const res = await authFetch(`${API_BASE}/incidents/${incident_id}/postmortem`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
   });
@@ -158,7 +182,7 @@ export async function dispatchPostmortem(
   destination: 'slack' | 'teams',
   webhook_override?: string
 ): Promise<{ status: string; destination: string; incident_id: string }> {
-  const res = await fetch(`${API_BASE}/incidents/${incident_id}/dispatch`, {
+  const res = await authFetch(`${API_BASE}/incidents/${incident_id}/dispatch`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ destination, webhook_override: webhook_override || undefined }),
@@ -225,7 +249,7 @@ async function callChatOpsEndpoint(
   action: ChatOpsActionType,
   username: string
 ): Promise<ChatOpsResult> {
-  const res = await fetch(`${API_BASE}/slack/simulate`, {
+  const res = await authFetch(`${API_BASE}/slack/simulate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ incident_id, action, username }),

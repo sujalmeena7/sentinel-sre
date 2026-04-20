@@ -163,12 +163,13 @@ const Nav = () => {
           </nav>
 
           <div className="hidden md:flex items-center gap-2">
-            <a href="#" className="px-3 py-1.5 text-sm text-white/60 hover:text-white transition-colors">
+            <a href="/login" className="px-3 py-1.5 text-sm text-white/60 hover:text-white transition-colors" data-testid="nav-signin-link">
               Sign in
             </a>
             <a
-              href="/dashboard"
+              href="/register"
               className="px-4 py-1.5 text-sm rounded-full bg-white text-black hover:bg-white/90 transition-colors font-medium"
+              data-testid="nav-launch-dashboard-link"
             >
               Launch Dashboard
             </a>
@@ -196,7 +197,7 @@ const Nav = () => {
                   {l.label}
                 </a>
               ))}
-              <a href="/dashboard" onClick={() => setOpen(false)} className="block text-center mt-2 px-4 py-2 rounded-full bg-white text-black text-sm font-medium">
+              <a href="/register" onClick={() => setOpen(false)} className="block text-center mt-2 px-4 py-2 rounded-full bg-white text-black text-sm font-medium">
                 Get started
               </a>
             </motion.div>

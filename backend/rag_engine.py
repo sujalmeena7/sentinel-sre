@@ -17,6 +17,7 @@ Hardening features:
 import os
 import math
 import logging
+from typing import Optional
 import chromadb
 from dotenv import load_dotenv
 from llama_index.core import VectorStoreIndex, Document, StorageContext, Settings
@@ -155,11 +156,14 @@ def add_incident_to_index(incident):
             "label": label,
             "weight": weight,
             "failure_type": failure_type,
+            # Multi-tenant isolation key. Tenants can ONLY retrieve their
+            # own vectors via the MetadataFilter in query_similar_incidents.
+            "user_id": str(incident.user_id) if getattr(incident, "user_id", None) else "unknown",
         },
     )
     index = get_or_create_index()
     index.insert(doc)
-    logger.info(f"📦 Indexed incident {incident.id}: label={label}, weight={weight:.2f}, failure_type={failure_type}")
+    logger.info(f"📦 Indexed incident {incident.id}: label={label}, weight={weight:.2f}, failure_type={failure_type}, user_id={doc.metadata['user_id']}")
 
 
 def update_incident_in_index(incident):
@@ -176,14 +180,24 @@ def update_incident_in_index(incident):
 # PHASE 5: Query-Time Retrieval with Filtering, Partitioning, Fallback
 # ═══════════════════════════════════════════════════════════════════════
 
-def query_similar_incidents(service_name: str, symptoms: list, signals: list):
+def query_similar_incidents(service_name: str, symptoms: list, signals: list, user_id: Optional[str] = None):
     """
-    Query ChromaDB with service-level metadata filtering.
+    Query ChromaDB with MANDATORY user_id filtering for tenant isolation,
+    plus service-level metadata filtering when possible.
+
     Returns three sorted lists: (positives, negatives, unrated).
     Positives are ranked by weight descending and capped.
     Negatives are dampened and limited.
     If positives are sparse, unrated examples backfill the gap.
+
+    SECURITY: If user_id is not provided, an empty result is returned.
+    This prevents accidental cross-tenant leakage if a caller forgets
+    to pass user_id (fail-closed behavior).
     """
+    if not user_id:
+        logger.warning("query_similar_incidents called without user_id — returning empty results (fail-closed isolation).")
+        return [], [], []
+
     query_str = f"Symptoms: {', '.join(symptoms)}. Signals: {signals}."
 
     if chroma_collection.count() == 0:
@@ -191,10 +205,13 @@ def query_similar_incidents(service_name: str, symptoms: list, signals: list):
 
     index = get_or_create_index()
 
-    # Attempt service-filtered retrieval first
+    # Strict tenant isolation: always filter by user_id. Service filter
+    # is layered on top to improve relevance, with a fallback that still
+    # keeps the user_id filter intact.
     nodes = []
     try:
         filters = MetadataFilters(filters=[
+            ExactMatchFilter(key="user_id", value=str(user_id)),
             ExactMatchFilter(key="service", value=service_name),
         ])
         retriever = index.as_retriever(similarity_top_k=RETRIEVAL_BATCH_SIZE, filters=filters)
@@ -202,13 +219,20 @@ def query_similar_incidents(service_name: str, symptoms: list, signals: list):
     except Exception:
         pass
 
-    # Fallback: unfiltered retrieval if service filter returned nothing
+    # Fallback: drop the service filter but KEEP user_id isolation.
     if not nodes:
         try:
-            retriever = index.as_retriever(similarity_top_k=RETRIEVAL_BATCH_SIZE)
+            filters = MetadataFilters(filters=[
+                ExactMatchFilter(key="user_id", value=str(user_id)),
+            ])
+            retriever = index.as_retriever(similarity_top_k=RETRIEVAL_BATCH_SIZE, filters=filters)
             nodes = retriever.retrieve(query_str)
         except Exception:
             return [], [], []
+
+    # Defense-in-depth: post-filter any node whose metadata doesn't match
+    # the calling tenant, in case the vector store filter ever slips.
+    nodes = [n for n in nodes if str(n.metadata.get("user_id", "")) == str(user_id)]
 
     # ── Partition by label ──
     positives = []
