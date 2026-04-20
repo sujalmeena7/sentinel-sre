@@ -52,14 +52,16 @@ openai_api_key = os.getenv("OPENAI_API_KEY", "")
 def get_llm():
     """Return the best available LLM. Groq is primary, OpenAI is fallback."""
     if groq_api_key and groq_api_key != "dummy":
-        return Groq(model="llama-3.3-70b-versatile", api_key=groq_api_key)
+        return Groq(model="llama-3.3-70b-versatile", api_key=groq_api_key, max_retries=0, request_timeout=15.0)
     elif openai_api_key and openai_api_key != "dummy":
-        return OpenAI(model="gpt-3.5-turbo", api_key=openai_api_key)
+        return OpenAI(model="gpt-3.5-turbo", api_key=openai_api_key, max_retries=0, timeout=15.0)
     else:
         return None
 
 # ─── Embedding Model (API-based, lightweight for production) ────────
-embedding_model = OpenAIEmbedding(api_key=openai_api_key)
+# Note: max_retries=0 and timeout=10.0 prevents silent hanging and Gateway Timeouts
+# if the OpenAI API is rate-limiting us (429) or taking too long.
+embedding_model = OpenAIEmbedding(api_key=openai_api_key, max_retries=0, timeout=10.0)
 Settings.embed_model = embedding_model
 
 # Set the LLM globally if available
