@@ -19,7 +19,12 @@ export interface Incident {
     status: string;
   }[];
   acknowledged_by?: string | null;
-  predicted_cause?: string | null; // Adding this to help with timeline logic
+  predicted_cause?: string | null; 
+  expected_cause?: string | null;
+  is_correct?: boolean | null;
+  human_feedback_score?: number | null;
+  human_feedback_count?: number | null;
+  human_feedback_comment?: string | null;
   runbook_refs: string[];
 }
 

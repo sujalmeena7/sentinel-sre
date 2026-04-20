@@ -2,10 +2,12 @@ import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import { Radio, Copy, Check, ExternalLink } from 'lucide-react';
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+
 export default function TelemetryPanel() {
   const [copied, setCopied] = useState(false);
-  const webhookUrl = "http://localhost:8000/api/v1/telemetry/prometheus";
-  const token = "change-me-in-production";
+  const webhookUrl = `${API_URL}/api/v1/telemetry/prometheus`;
+  const token = process.env.NEXT_PUBLIC_TELEMETRY_TOKEN || "change-me-in-production";
 
   const curlCommand = `curl -X POST ${webhookUrl} \\
   -H "Authorization: Bearer ${token}" \\

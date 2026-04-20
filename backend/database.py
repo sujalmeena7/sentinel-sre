@@ -2,11 +2,15 @@ import os
 from sqlmodel import create_engine, SQLModel, Session
 from sqlalchemy import text
 
-# Using an embedded SQLite database
-DATABASE_URL = "sqlite:///./incidents.db"
+# Use DATABASE_URL from environment with SQLite as fallback
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./incidents.db")
 
-# Requires check_same_thread for FastAPI concurrency with SQLite
-engine = create_engine(DATABASE_URL, echo=True, connect_args={"check_same_thread": False})
+# SQLite requires check_same_thread=False for FastAPI concurrency. 
+# Other DBs (Postgres, MySQL) should not use this argument.
+is_sqlite = DATABASE_URL.startswith("sqlite")
+connect_args = {"check_same_thread": False} if is_sqlite else {}
+
+engine = create_engine(DATABASE_URL, echo=True, connect_args=connect_args)
 
 def init_db():
     # Only create tables if they don't exist

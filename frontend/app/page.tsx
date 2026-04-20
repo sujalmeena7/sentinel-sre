@@ -47,8 +47,15 @@ import {
    Reusable bits
    ========================================================= */
 
-const FadeIn = ({ children, delay = 0, y = 20, className = '' }) => {
-  const ref = useRef(null)
+interface FadeInProps {
+  children: React.ReactNode;
+  delay?: number;
+  y?: number;
+  className?: string;
+}
+
+const FadeIn = ({ children, delay = 0, y = 20, className = '' }: FadeInProps) => {
+  const ref = useRef<HTMLDivElement>(null)
   const inView = useInView(ref, { once: true, margin: '-80px' })
   return (
     <motion.div
@@ -63,14 +70,26 @@ const FadeIn = ({ children, delay = 0, y = 20, className = '' }) => {
   )
 }
 
-const GradientBadge = ({ children, icon: Icon }) => (
+interface GradientBadgeProps {
+  children: React.ReactNode;
+  icon?: any;
+}
+
+const GradientBadge = ({ children, icon: Icon }: GradientBadgeProps) => (
   <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full glass text-xs font-medium text-white/80">
     {Icon && <Icon className="w-3.5 h-3.5 text-indigo-400" />}
     <span>{children}</span>
   </div>
 )
 
-const GlowButton = ({ children, variant = 'primary', href = '#', icon: Icon }) => {
+interface GlowButtonProps {
+  children: React.ReactNode;
+  variant?: 'primary' | 'secondary';
+  href?: string;
+  icon?: any;
+}
+
+const GlowButton = ({ children, variant = 'primary', href = '#', icon: Icon }: GlowButtonProps) => {
   const base = 'relative inline-flex items-center justify-center gap-2 px-6 py-3 rounded-full font-medium text-sm transition-all duration-300 shine group'
   if (variant === 'primary') {
     return (
@@ -132,7 +151,7 @@ const Nav = () => {
           </a>
 
           <nav className="hidden md:flex items-center gap-1">
-            {links.map((l) => (
+            {links.map((l: any) => (
               <a
                 key={l.href}
                 href={l.href}
@@ -172,7 +191,7 @@ const Nav = () => {
               exit={{ opacity: 0, y: -10 }}
               className="md:hidden mt-2 glass-strong rounded-2xl p-4 space-y-1"
             >
-              {links.map((l) => (
+              {links.map((l: any) => (
                 <a key={l.href} href={l.href} onClick={() => setOpen(false)} className="block px-3 py-2 rounded-lg text-sm text-white/70 hover:text-white hover:bg-white/5">
                   {l.label}
                 </a>
@@ -275,7 +294,7 @@ const Hero = () => {
               Trusted by engineering teams at
             </p>
             <div className="flex flex-wrap items-center justify-center gap-x-12 gap-y-4 opacity-60">
-              {['Acme Corp', 'Vertex', 'Quantum', 'Nebula', 'Linear', 'Helios'].map((name) => (
+              {['Acme Corp', 'Vertex', 'Quantum', 'Nebula', 'Linear', 'Helios'].map((name: string) => (
                 <span key={name} className="text-white/50 font-semibold tracking-tight text-lg">
                   {name}
                 </span>
@@ -364,7 +383,7 @@ const DashboardMock = () => {
             { icon: FileText, label: 'Postmortems' },
             { icon: Database, label: 'Sources' },
             { icon: Bell, label: 'Alerts' },
-          ].map((item, i) => (
+          ].map((item: any, i: number) => (
             <div
               key={i}
               className={`flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs transition-colors ${
@@ -392,7 +411,7 @@ const DashboardMock = () => {
             </div>
           </div>
           <div className="divide-y divide-white/5">
-            {incidents.map((incident, i) => (
+            {incidents.map((incident: any, i: number) => (
               <button
                 key={incident.id}
                 onClick={() => setSelectedIncident(i)}
@@ -461,7 +480,7 @@ const DashboardMock = () => {
             </div>
             <p className="text-sm text-white/70 leading-relaxed">{inc.cause}</p>
             <div className="flex flex-wrap gap-1.5 mt-3">
-              {inc.signals.map((s, i) => (
+              {inc.signals.map((s: string, i: number) => (
                 <span
                   key={i}
                   className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-white/5 text-white/60 border border-white/10"
@@ -490,7 +509,11 @@ const DashboardMock = () => {
   )
 }
 
-const ConfidenceBadge = ({ value }) => {
+interface ConfidenceBadgeProps {
+  value: number;
+}
+
+const ConfidenceBadge = ({ value }: ConfidenceBadgeProps) => {
   const color =
     value >= 90 ? 'from-emerald-400 to-teal-500' : value >= 80 ? 'from-cyan-400 to-blue-500' : 'from-yellow-400 to-orange-500'
   return (
@@ -535,7 +558,7 @@ const MiniChart = () => {
   const width = 100
   const height = 28
   const path = points
-    .map((p, i) => {
+    .map((p: number, i: number) => {
       const x = (i / (points.length - 1)) * width
       const y = height - (p / max) * height
       return `${i === 0 ? 'M' : 'L'} ${x} ${y}`
@@ -641,7 +664,7 @@ const Features = () => {
         </FadeIn>
 
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-5">
-          {features.map((f, i) => (
+          {features.map((f: any, i: number) => (
             <FadeIn key={f.title} delay={i * 0.05}>
               <FeatureCard {...f} />
             </FadeIn>
@@ -652,7 +675,15 @@ const Features = () => {
   )
 }
 
-const FeatureCard = ({ icon: Icon, title, desc, tint, iconColor }) => (
+interface FeatureCardProps {
+  icon: any;
+  title: string;
+  desc: string;
+  tint: string;
+  iconColor?: string;
+}
+
+const FeatureCard = ({ icon: Icon, title, desc, tint, iconColor }: FeatureCardProps) => (
   <div className="group relative h-full rounded-2xl glass p-6 transition-all duration-500 hover:-translate-y-1 hover:border-white/15 overflow-hidden">
     <div className={`absolute -top-20 -right-20 w-48 h-48 rounded-full bg-gradient-to-br ${tint} blur-3xl opacity-0 group-hover:opacity-100 transition-opacity duration-700`} />
     <div className="relative">
@@ -712,7 +743,7 @@ const HowItWorks = () => {
           {/* connecting gradient line */}
           <div className="hidden lg:block absolute top-10 left-[8%] right-[8%] h-px bg-gradient-to-r from-transparent via-indigo-500/40 to-transparent" />
           <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6 relative">
-            {steps.map((step, i) => (
+            {steps.map((step: any, i: number) => (
               <FadeIn key={step.title} delay={i * 0.08}>
                 <div className="relative">
                   <div className="relative z-10 flex flex-col items-start">
@@ -840,7 +871,7 @@ const DeveloperFocus = () => {
                   'OpenTelemetry-native — drop-in collector',
                   'Webhooks for PagerDuty, Slack, Linear, Jira',
                   'Terraform provider for infra-as-code setups',
-                ].map((item) => (
+                ].map((item: any) => (
                   <div key={item} className="flex items-center gap-3 text-sm text-white/70">
                     <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
                     {item}
@@ -968,7 +999,7 @@ const Testimonials = () => {
             <FadeIn key={t.name} delay={i * 0.05}>
               <div className="group relative rounded-2xl glass p-7 h-full hover:border-white/15 transition-all duration-500">
                 <div className="flex gap-1 mb-4">
-                  {Array.from({ length: 5 }).map((_, i) => (
+                  {Array.from({ length: 5 }).map((_: any, i: number) => (
                     <Star key={i} className="w-3.5 h-3.5 fill-yellow-400 text-yellow-400" />
                   ))}
                 </div>
@@ -1089,7 +1120,12 @@ const Footer = () => {
   )
 }
 
-const FooterCol = ({ title, links }) => (
+interface FooterColProps {
+  title: string;
+  links: string[];
+}
+
+const FooterCol = ({ title, links }: FooterColProps) => (
   <div>
     <h4 className="text-sm font-semibold text-white mb-4">{title}</h4>
     <ul className="space-y-2.5">
@@ -1141,7 +1177,7 @@ const Integrations = () => {
         </FadeIn>
 
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-          {integrations.map((tool, i) => (
+          {integrations.map((tool: any, i: number) => (
             <FadeIn key={tool.name} delay={i * 0.03}>
               <IntegrationCard {...tool} />
             </FadeIn>
@@ -1161,7 +1197,13 @@ const Integrations = () => {
   )
 }
 
-const IntegrationCard = ({ name, color, tag }) => {
+interface IntegrationCardProps {
+  name: string;
+  color: string;
+  tag: string;
+}
+
+const IntegrationCard = ({ name, color, tag }: IntegrationCardProps) => {
   const initials = name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
   return (
     <div className="group relative rounded-2xl glass p-5 h-full flex items-center gap-4 overflow-hidden hover:border-white/15 transition-all duration-500 hover:-translate-y-0.5">
@@ -1207,7 +1249,7 @@ const ChaosSimulator = () => {
   ]
 
   // Precomputed realistic RCA responses per combination (selected ones + fallback)
-  const rcaMap = {
+  const rcaMap: { [key: string]: any } = {
     'api-gateway|network-latency': {
       cause: 'Upstream DNS resolver in us-east-1 experiencing 500ms timeouts. Route53 health checks flapping across AZs, forcing gateway to retry failovers. Fix: pin resolver config + reduce DNS TTL to 30s.',
       confidence: 91,
@@ -1276,13 +1318,13 @@ const ChaosSimulator = () => {
   const [service, setService] = useState('checkout-service')
   const [failure, setFailure] = useState('db-pool-exhaust')
   const [phase, setPhase] = useState('idle') // idle | injecting | detecting | analyzing | done
-  const [events, setEvents] = useState([])
+  const [events, setEvents] = useState<any[]>([])
 
   const result = rcaMap[`${service}|${failure}`] || rcaMap.default
   const serviceLabel = services.find(s => s.id === service)?.label
   const failureLabel = failures.find(f => f.id === failure)?.label
 
-  const timers = useRef([])
+  const timers = useRef<NodeJS.Timeout[]>([])
   useEffect(() => () => timers.current.forEach(clearTimeout), [])
 
   const injectFailure = () => {
@@ -1292,7 +1334,10 @@ const ChaosSimulator = () => {
     timers.current.forEach(clearTimeout)
     timers.current = []
 
-    const t = (ms, fn) => timers.current.push(setTimeout(fn, ms))
+    const t = (ms: number, fn: () => void) => {
+      const timeout = setTimeout(fn, ms);
+      timers.current.push(timeout);
+    }
 
     t(300, () =>
       setEvents(e => [...e, { time: 't+0.3s', type: 'inject', text: `Injecting "${failureLabel}" into ${serviceLabel}` }])
@@ -1384,7 +1429,7 @@ const ChaosSimulator = () => {
                       1 · Select service
                     </label>
                     <div className="space-y-2">
-                      {services.map(s => (
+                      {services.map((s: any) => (
                         <button
                           key={s.id}
                           onClick={() => !isBusy && setService(s.id)}
@@ -1412,7 +1457,7 @@ const ChaosSimulator = () => {
                       2 · Select failure mode
                     </label>
                     <div className="grid grid-cols-1 gap-2">
-                      {failures.map(f => (
+                      {failures.map((f: any) => (
                         <button
                           key={f.id}
                           onClick={() => !isBusy && setFailure(f.id)}
@@ -1493,7 +1538,7 @@ const ChaosSimulator = () => {
                         </div>
                       )}
                       <AnimatePresence>
-                        {events.map((e, i) => (
+                        {events.map((e: any, i: number) => (
                           <motion.div
                             key={i}
                             initial={{ opacity: 0, x: -8 }}
@@ -1563,7 +1608,7 @@ const ChaosSimulator = () => {
                           </div>
 
                           <div className="flex flex-wrap gap-1.5 mt-3">
-                            {result.signals.map((s, i) => (
+                            {result.signals.map((s: string, i: number) => (
                               <span
                                 key={i}
                                 className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-white/5 text-white/60 border border-white/10"
@@ -1614,7 +1659,13 @@ const ChaosSimulator = () => {
   )
 }
 
-const StatPill = ({ label, value, tint }) => (
+interface StatPillProps {
+  label: string;
+  value: string | number;
+  tint: string;
+}
+
+const StatPill = ({ label, value, tint }: StatPillProps) => (
   <div className="rounded-lg bg-white/[0.03] border border-white/8 px-2.5 py-2">
     <div className="text-[10px] uppercase tracking-wider text-white/40">{label}</div>
     <div className={`text-xs font-semibold mt-0.5 ${tint}`}>{value}</div>
@@ -1711,7 +1762,7 @@ const Pricing = () => {
         </FadeIn>
 
         <div className="grid md:grid-cols-3 gap-5 lg:gap-6 items-stretch">
-          {tiers.map((tier, i) => (
+          {tiers.map((tier: any, i: number) => (
             <FadeIn key={tier.name} delay={i * 0.08}>
               <PricingCard {...tier} />
             </FadeIn>
@@ -1731,7 +1782,21 @@ const Pricing = () => {
   )
 }
 
-const PricingCard = ({ name, icon: Icon, price, priceSub, desc, cta, features, featured, badge, accent, ring }) => (
+interface PricingCardProps {
+  name: string;
+  icon: any;
+  price: string;
+  priceSub: string;
+  desc: string;
+  cta: string;
+  features: string[];
+  featured?: boolean;
+  badge?: string;
+  accent: string;
+  ring: string;
+}
+
+const PricingCard = ({ name, icon: Icon, price, priceSub, desc, cta, features, featured, badge, accent, ring }: PricingCardProps) => (
   <div
     className={`relative h-full flex flex-col rounded-2xl p-7 transition-all duration-500 hover:-translate-y-1 ${
       featured
@@ -1787,7 +1852,7 @@ const PricingCard = ({ name, icon: Icon, price, priceSub, desc, cta, features, f
       </a>
 
       <div className="border-t border-white/5 pt-5 space-y-2.5">
-        {features.map((f, i) => (
+        {features.map((f: any, i: number) => (
           <div key={i} className="flex items-start gap-2.5 text-sm">
             <CheckCircle2 className={`w-4 h-4 shrink-0 mt-0.5 ${
               featured ? 'text-indigo-400' : 'text-emerald-400/80'
