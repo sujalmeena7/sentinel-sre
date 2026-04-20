@@ -35,13 +35,14 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 app = FastAPI(title="AI Root Cause Analyzer", version="0.2.0")
 
-# Allow frontend connections
-allowed_origins = os.getenv("ALLOWED_ORIGINS", "*").split(",")
+# Allow frontend connections - Flexible CORS for production
+allowed_origins_raw = os.getenv("ALLOWED_ORIGINS", "*")
+allowed_origins = [origin.strip() for origin in allowed_origins_raw.split(",")]
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
-    allow_credentials=True,
+    allow_credentials=False,  # Set to False to allow "*" if needed and avoid browser credential blocks
     allow_methods=["*"],
     allow_headers=["*"],
 )
