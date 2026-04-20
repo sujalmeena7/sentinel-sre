@@ -122,6 +122,8 @@ def score_anomalies(
 
             elif key.lower() in ("log", "event", "error", "message", "trace"):
                 # Non-numeric signals: check for error patterns
+                if value is None:
+                    continue
                 val_lower = str(value).lower()
                 error_keywords = ["exception", "error", "timeout", "refused", "killed", "crash", "panic", "fatal"]
                 if any(kw in val_lower for kw in error_keywords):

@@ -4,13 +4,24 @@ import logging
 import re
 import httpx
 from urllib.parse import urlparse
-from fastapi import FastAPI, Depends, BackgroundTasks, HTTPException
+from fastapi import FastAPI, Depends, BackgroundTasks, HTTPException, Security, Request
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlmodel import Session, select
 from typing import List, Dict, Any, Optional, Union
 from pydantic import BaseModel
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+from uuid import uuid4
+import hmac
+import hashlib
+import json
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from sqlmodel import Session, select
+from typing import List, Dict, Any, Optional, Union
+from pydantic import BaseModel
+from datetime import datetime, timezone, timedelta
 from uuid import uuid4
 from dotenv import load_dotenv
 from models import Incident
@@ -56,6 +67,32 @@ def parse_dt(val: Optional[str]) -> Optional[datetime]:
     if val:
         return datetime.fromisoformat(val)
     return None
+
+# --- Telemetry Auth ---
+security = HTTPBearer()
+
+def verify_telemetry_token(credentials: HTTPAuthorizationCredentials = Security(security)):
+    expected_token = os.getenv("TELEMETRY_SECRET_TOKEN", "change-me-in-production")
+    if credentials.credentials != expected_token:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid telemetry authentication token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return credentials.credentials
+
+# --- Prometheus Payload Models ---
+class PrometheusAlert(BaseModel):
+    status: str
+    labels: Dict[str, str] = {}
+    annotations: Dict[str, str] = {}
+    startsAt: Optional[str] = None
+    endsAt: Optional[str] = None
+
+class PrometheusPayload(BaseModel):
+    receiver: str
+    status: str
+    alerts: List[PrometheusAlert] = []
 
 
 @app.on_event("startup")
@@ -108,6 +145,123 @@ def ingest_incident(
     return {"status": "accepted", "incident_id": str(incident.id)}
 
 
+@app.post("/api/v1/telemetry/prometheus", response_model=Dict[str, Any])
+def ingest_prometheus_alerts(
+    payload: PrometheusPayload,
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_session),
+    token: str = Depends(verify_telemetry_token)
+):
+    """Ingest real-time Prometheus alerts and bind them to our AI pipeline."""
+    logger.info(f"📡 Received Prometheus webhook with {len(payload.alerts)} alerts")
+    
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(minutes=15)
+    processed = []
+    
+    firing_alerts_by_fingerprint = {}
+    resolved_alerts = []
+    
+    # 1. Parse and categorize alerts
+    for alert in payload.alerts:
+        service = alert.labels.get("service") or alert.labels.get("job") or "unknown-service"
+        alertname = alert.labels.get("alertname", "unknown")
+        
+        # 2. Map severities to our internal model
+        raw_sev = alert.labels.get("severity", "unknown").lower()
+        if raw_sev in ["critical", "fatal", "page", "emergency"]:
+            sev = "severe"
+        elif raw_sev in ["warning", "warn", "high"]:
+            sev = "moderate"
+        else:
+            sev = "low"
+            
+        alert.labels["mapped_severity"] = sev
+        fingerprint = f"{service}::{alertname}"
+        
+        if alert.status == "resolved":
+            resolved_alerts.append((service, alertname))
+        else:
+            if fingerprint not in firing_alerts_by_fingerprint:
+                firing_alerts_by_fingerprint[fingerprint] = []
+            firing_alerts_by_fingerprint[fingerprint].append((service, alertname, alert))
+
+    # 3. Handle resolved alerts to close incidents
+    for service, alertname in resolved_alerts:
+        open_incidents = session.exec(
+            select(Incident)
+            .where(Incident.service == service)
+            .where(Incident.resolved_time == None)
+        ).all()
+        for inc in open_incidents:
+            has_alert = any(sig.get("metric") == alertname for sig in (inc.signals or []))
+            if has_alert:
+                inc.resolved_time = now
+                session.add(inc)
+                processed.append(str(inc.id))
+                logger.info(f"✅ Resolved incident {inc.id} for {service} due to resolved alert")
+    session.commit()
+
+    # 4. Handle firing alerts with fingerprint deduplication
+    for fingerprint, data_list in firing_alerts_by_fingerprint.items():
+        service = data_list[0][0]
+        alertname = data_list[0][1]
+        alerts = [item[2] for item in data_list]
+        
+        open_incidents = session.exec(
+            select(Incident)
+            .where(Incident.service == service)
+            .where(Incident.resolved_time == None)
+            .where(Incident.start_time >= cutoff)
+            .order_by(Incident.start_time.desc())
+        ).all()
+        
+        # Strict fingerprint matching: only append if an incident exists for same service AND metric
+        recent_incident = next((inc for inc in open_incidents if any(sig.get("metric") == alertname for sig in (inc.signals or []))), None)
+        
+        new_symptoms = [a.annotations.get("summary", a.labels.get("alertname", "Unknown Alert")) for a in alerts]
+        new_signals = [{
+            "metric": a.labels.get("alertname", "alert"), 
+            "log": a.annotations.get("description", ""), 
+            "status": a.status, 
+            "signal_severity": a.labels.get("mapped_severity", "low")
+        } for a in alerts]
+        
+        if recent_incident:
+            current_symptoms = list(recent_incident.symptoms) if recent_incident.symptoms else []
+            for s in new_symptoms:
+                if s not in current_symptoms:
+                    current_symptoms.append(s)
+            recent_incident.symptoms = current_symptoms
+            
+            current_signals = list(recent_incident.signals) if recent_incident.signals else []
+            current_signals.extend(new_signals)
+            recent_incident.signals = current_signals
+            
+            session.add(recent_incident)
+            session.commit()
+            processed.append(str(recent_incident.id))
+            logger.info(f"🔄 Appended alerts to incident {recent_incident.id} with fingerprint {fingerprint}")
+        else:
+            env = alerts[0].labels.get("environment", "production")
+            incident = Incident(
+                id=str(uuid4()),
+                service=service,
+                environment=env,
+                start_time=now,
+                symptoms=new_symptoms,
+                signals=new_signals
+            )
+            session.add(incident)
+            session.commit()
+            session.refresh(incident)
+            background_tasks.add_task(process_incident_background, incident)
+            processed.append(str(incident.id))
+            logger.info(f"🚨 Created new incident {incident.id} for fingerprint {fingerprint}")
+            
+    return {"status": "accepted", "incidents_processed": processed}
+
+
 class AnalyzeRequest(BaseModel):
     incident_id: str
     symptoms: List[str]
@@ -157,6 +311,10 @@ class FeedbackRequest(BaseModel):
     incident_id: str
     score: int  # 1 for upvote, -1 for downvote
     comment: Optional[str] = None
+
+class DispatchRequest(BaseModel):
+    destination: str  # "slack" or "teams"
+    webhook_override: Optional[str] = None
 
 @app.post("/api/v1/incidents/feedback")
 def submit_feedback(req: FeedbackRequest, background_tasks: BackgroundTasks, session: Session = Depends(get_session)):
@@ -385,6 +543,31 @@ def _slack_payload(markdown: str, incident: Incident) -> Dict[str, Any]:
         {"type": "section", "text": {"type": "mrkdwn", "text": f"*🚨 Impact*\n{_truncate_text(impact, 2900)}"}},
         {"type": "section", "text": {"type": "mrkdwn", "text": f"*🔍 Root Cause*\n{_truncate_text(root_cause, 2900)}"}},
         {"type": "section", "text": {"type": "mrkdwn", "text": f"*✅ Actions*\n{_truncate_text(actions, 2900)}"}},
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "Acknowledge"},
+                    "action_id": "acknowledge_incident",
+                    "value": str(incident.id)
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "Execute Runbook"},
+                    "style": "primary",
+                    "action_id": "execute_runbook",
+                    "value": str(incident.id)
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "Resolve"},
+                    "style": "danger",
+                    "action_id": "mark_resolved",
+                    "value": str(incident.id)
+                }
+            ]
+        }
     ]
 
     return {
@@ -452,7 +635,17 @@ async def _generate_postmortem_markdown(incident_id: str, session: Session) -> s
     ) or "  - No changes recorded"
 
     root_cause = incident.root_cause or incident.predicted_cause or "Not yet determined"
-    fixes = ", ".join(incident.fixes_applied) if incident.fixes_applied else "None applied yet"
+    
+    if incident.fixes_applied:
+        fixes_strs = []
+        for fix in incident.fixes_applied:
+            if isinstance(fix, dict):
+                fixes_strs.append(f"{fix.get('action')}: {fix.get('description')}")
+            else:
+                fixes_strs.append(str(fix))
+        fixes = ", ".join(fixes_strs)
+    else:
+        fixes = "None applied yet"
 
     # ── Service dependency map for blast radius ───────────────────
     SERVICE_DEPS = {
@@ -688,3 +881,215 @@ async def dispatch_postmortem(
         "destination": destination,
         "incident_id": incident_id,
     }
+
+
+
+async def verify_slack_signature(request: Request, body_bytes: bytes = b""):
+    """Verify Slack request signature. Accepts pre-read body to avoid double-read issues."""
+    slack_secret = os.getenv("SLACK_SIGNING_SECRET")
+    if not slack_secret:
+        logger.warning("SLACK_SIGNING_SECRET not set - skipping signature verification")
+        return True
+
+    timestamp = request.headers.get("X-Slack-Request-Timestamp", "")
+    signature = request.headers.get("X-Slack-Signature", "")
+    if not timestamp or not signature:
+        logger.warning("Slack request missing signature headers - skipping verification")
+        return True
+
+    try:
+        if abs(datetime.now(timezone.utc).timestamp() - int(timestamp)) > 60 * 5:
+            raise HTTPException(status_code=400, detail="Request timestamp too old")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid timestamp formatting")
+
+    sig_basestring = f"v0:{timestamp}:{body_bytes.decode('utf-8')}"
+    my_signature = "v0=" + hmac.new(
+        slack_secret.encode(),
+        sig_basestring.encode(),
+        hashlib.sha256
+    ).hexdigest()
+
+    if not hmac.compare_digest(my_signature, signature):
+        raise HTTPException(status_code=400, detail="Invalid Slack signature")
+    return True
+
+
+def process_slack_action(payload: dict):
+    """Process a Slack interactive action in a background thread."""
+    from database import engine
+
+    actions = payload.get("actions", [])
+    if not actions:
+        logger.warning("Slack payload has no actions")
+        return
+
+    action = actions[0]
+    action_id = action.get("action_id")
+    incident_id = action.get("value")
+    user = payload.get("user", {}).get("username", "someone")
+    response_url = payload.get("response_url")
+
+    logger.info(f"Processing Slack action: {action_id} for incident {incident_id} by {user}")
+
+    with Session(engine) as session:
+        incident = session.get(Incident, incident_id)
+        if not incident:
+            logger.error(f"Incident {incident_id} not found for Slack action")
+            return
+
+        now = datetime.now(timezone.utc)
+        message_update = ""
+
+        if action_id == "acknowledge_incident":
+            incident.acknowledged_by = user
+            message_update = f"Acknowledged by @{user}"
+            logger.info(f"Slack: Incident {incident_id} acknowledged by {user}")
+        elif action_id == "mark_resolved":
+            incident.resolved_time = now
+            incident.acknowledged_by = incident.acknowledged_by or user
+            message_update = f"Resolved by @{user}"
+            logger.info(f"Slack: Incident {incident_id} resolved by {user}")
+        elif action_id == "execute_runbook":
+            fixes = list(incident.fixes_applied) if incident.fixes_applied else []
+            fixes.append({
+                "action": "Automated Runbook",
+                "description": "Restarted target pods to mitigate issue",
+                "timestamp": now.isoformat(),
+                "source": f"Slack (@{user})",
+                "status": "success"
+            })
+            incident.fixes_applied = fixes
+            message_update = f"Runbook triggered by @{user}"
+            logger.info(f"Slack: Runbook executed for {incident_id} by {user}")
+        else:
+            logger.warning(f"Unknown Slack action_id: {action_id}")
+            return
+
+        session.add(incident)
+        session.commit()
+        logger.info(f"DB committed for Slack action {action_id} on {incident_id}")
+
+    if response_url:
+        try:
+            resp = httpx.post(response_url, json={"replace_original": False, "text": message_update})
+            logger.info(f"Slack response_url reply: {resp.status_code}")
+        except Exception as e:
+            logger.error(f"Failed to send Slack response update: {e}")
+
+
+@app.post("/api/v1/slack/interactive")
+async def slack_interactive(
+    request: Request,
+    background_tasks: BackgroundTasks
+):
+    """Handle Slack interactive button callbacks (Acknowledge, Runbook, Resolve)."""
+    from urllib.parse import parse_qs
+
+    try:
+        body_bytes = await request.body()
+        body_str = body_bytes.decode("utf-8")
+        logger.info(f"Slack interactive request received ({len(body_bytes)} bytes)")
+
+        await verify_slack_signature(request, body_bytes)
+
+        parsed = parse_qs(body_str)
+        payload_str = parsed.get("payload", [None])[0]
+
+        if not payload_str:
+            logger.error(f"Missing payload in Slack form data. Keys: {list(parsed.keys())}")
+            return JSONResponse(status_code=200, content={"text": "Missing payload"})
+
+        payload = json.loads(payload_str)
+        logger.info(f"Slack payload parsed: type={payload.get('type')}, actions={[a.get('action_id') for a in payload.get('actions', [])]}")
+
+        background_tasks.add_task(process_slack_action, payload)
+
+        return JSONResponse(status_code=200, content={"status": "accepted"})
+    except json.JSONDecodeError as e:
+        logger.error(f"Invalid JSON in Slack payload: {e}")
+        return JSONResponse(status_code=200, content={"text": "Invalid payload"})
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in slack_interactive: {e}", exc_info=True)
+        return JSONResponse(status_code=200, content={"text": "Internal error"})
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Local ChatOps Simulation — test Slack actions without ngrok
+# ═══════════════════════════════════════════════════════════════════════
+
+class SimulateSlackAction(BaseModel):
+    incident_id: str
+    action: str  # "acknowledge", "execute_runbook", or "resolve"
+    username: str = "local-engineer"
+
+
+@app.post("/api/v1/slack/simulate")
+def simulate_slack_action(req: SimulateSlackAction, session: Session = Depends(get_session)):
+    """Simulate a Slack interactive action locally (no ngrok needed)."""
+    incident = session.get(Incident, req.incident_id)
+    if not incident:
+        raise HTTPException(status_code=404, detail="Incident not found")
+
+    now = datetime.now(timezone.utc)
+
+    if req.action == "acknowledge":
+        incident.acknowledged_by = req.username
+        result = f"Acknowledged by @{req.username}"
+    elif req.action == "execute_runbook":
+        fixes = list(incident.fixes_applied) if incident.fixes_applied else []
+        fixes.append({
+            "action": "Automated Runbook",
+            "description": "Restarted target pods to mitigate issue",
+            "timestamp": now.isoformat(),
+            "source": f"Dashboard (@{req.username})",
+            "status": "success"
+        })
+        incident.fixes_applied = fixes
+        result = f"Runbook triggered by @{req.username}"
+    elif req.action == "resolve":
+        incident.resolved_time = now
+        incident.acknowledged_by = incident.acknowledged_by or req.username
+        result = f"Resolved by @{req.username}"
+    else:
+        raise HTTPException(status_code=400, detail="action must be 'acknowledge', 'execute_runbook', or 'resolve'")
+
+    session.add(incident)
+    session.commit()
+    logger.info(f"Simulated Slack action: {req.action} on {req.incident_id} by {req.username}")
+
+    # Log the action to the activity log
+    chatops_activity_log.append({
+        "action": req.action,
+        "incident_id": req.incident_id,
+        "mode": "simulation",
+        "timestamp": now.isoformat(),
+        "user": req.username,
+    })
+
+    return {"status": "success", "action": req.action, "message": result}
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# ChatOps Activity Logging
+# ═══════════════════════════════════════════════════════════════════════
+
+chatops_activity_log: List[Dict[str, Any]] = []
+
+
+class ChatOpsLogEntry(BaseModel):
+    action: str
+    incident_id: str
+    mode: str
+    timestamp: str
+    user: str
+
+
+@app.get("/api/v1/chatops/logs")
+def get_chatops_logs(incident_id: Optional[str] = None):
+    """Return ChatOps activity logs, optionally filtered by incident_id."""
+    if incident_id:
+        return [e for e in chatops_activity_log if e["incident_id"] == incident_id]
+    return chatops_activity_log

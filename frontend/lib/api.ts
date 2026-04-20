@@ -11,7 +11,15 @@ export interface Incident {
   signals: { [key: string]: string }[];
   changes: { [key: string]: string }[];
   root_cause: string | null;
-  fixes_applied: string[];
+  fixes_applied: {
+    action: string;
+    description: string;
+    timestamp: string;
+    source: string;
+    status: string;
+  }[];
+  acknowledged_by?: string | null;
+  predicted_cause?: string | null; // Adding this to help with timeline logic
   runbook_refs: string[];
 }
 
@@ -113,3 +121,118 @@ export async function dispatchPostmortem(
   }
   return res.json();
 }
+
+// ═══════════════════════════════════════════════════════════════
+// ChatOps Types
+// ═══════════════════════════════════════════════════════════════
+
+export type ChatOpsActionType = 'acknowledge' | 'execute_runbook' | 'resolve';
+
+export interface ChatOpsResult {
+  status: string;
+  action: string;
+  message: string;
+}
+
+export interface ChatOpsLogEntry {
+  action: ChatOpsActionType;
+  incident_id: string;
+  mode: 'simulation' | 'real';
+  timestamp: string;
+  user: string;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Retry Helper (exponential backoff)
+// ═══════════════════════════════════════════════════════════════
+
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  maxRetries: number,
+  baseDelayMs: number,
+  label: string
+): Promise<T> {
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (err: any) {
+      lastError = err;
+      if (attempt < maxRetries) {
+        const delay = baseDelayMs * Math.pow(2, attempt);
+        console.warn(`[ChatOps] ${label} failed (attempt ${attempt + 1}/${maxRetries + 1}), retrying in ${delay}ms...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+  }
+  throw lastError;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ChatOps API Calls
+// ═══════════════════════════════════════════════════════════════
+
+async function callChatOpsEndpoint(
+  incident_id: string,
+  action: ChatOpsActionType,
+  username: string
+): Promise<ChatOpsResult> {
+  const res = await fetch(`${API_BASE}/slack/simulate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ incident_id, action, username }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`ChatOps action failed: ${res.status} - ${text}`);
+  }
+  return res.json();
+}
+
+/**
+ * Unified ChatOps action handler.
+ *
+ * - Simulation mode: direct call, no retries
+ * - Real Slack mode: retries with exponential backoff
+ *
+ * Logs mode + action to console for debugging.
+ */
+export async function handleChatOpsAction(
+  action: ChatOpsActionType,
+  incidentId: string,
+  useSimulation: boolean,
+  username: string = 'local-engineer',
+  maxRetries: number = 3,
+  retryBaseDelayMs: number = 500
+): Promise<ChatOpsResult> {
+  const mode = useSimulation ? 'simulation' : 'real';
+  const shortId = incidentId.slice(0, 8);
+  console.log(`[ChatOps] MODE: ${mode}`);
+  console.log(`[ChatOps] ACTION: ${action} on ${shortId} by ${username}`);
+
+  if (useSimulation) {
+    return callChatOpsEndpoint(incidentId, action, username);
+  }
+
+  // Real Slack mode — retry with exponential backoff
+  return withRetry(
+    () => callChatOpsEndpoint(incidentId, action, username),
+    maxRetries,
+    retryBaseDelayMs,
+    `${action}(${shortId})`
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ChatOps Activity Logs
+// ═══════════════════════════════════════════════════════════════
+
+export async function fetchChatOpsLogs(incident_id?: string): Promise<ChatOpsLogEntry[]> {
+  const url = incident_id
+    ? `${API_BASE}/chatops/logs?incident_id=${incident_id}`
+    : `${API_BASE}/chatops/logs`;
+  const res = await fetch(url, { cache: 'no-store' });
+  if (!res.ok) return [];
+  return res.json();
+}
+

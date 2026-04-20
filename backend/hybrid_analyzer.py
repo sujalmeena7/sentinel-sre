@@ -43,6 +43,8 @@ class HybridAnalysisResult:
 
 
 def _parse_powershell_dict(item: Any) -> Dict[str, Any]:
+    if item is None:
+        return {}
     if isinstance(item, dict):
         return item
     if isinstance(item, str) and item.startswith("@{") and item.endswith("}"):
@@ -53,8 +55,12 @@ def _parse_powershell_dict(item: Any) -> Dict[str, Any]:
             if "=" in p:
                 k, v = p.split("=", 1)
                 res[k.strip()] = v.strip()
+            elif p.strip():
+                # If there's no '=', we just store the raw segment under a generic key
+                res[f"key_{len(res)}"] = p.strip()
         return res
     return {"raw": str(item)}
+
 
 
 def run_hybrid_analysis(

@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import List, Optional, Any
 from uuid import uuid4
 from sqlmodel import SQLModel, Field, Column, JSON
 
@@ -17,8 +17,11 @@ class Incident(SQLModel, table=True):
     changes: List[dict] = Field(default=[], sa_column=Column(JSON))
     
     root_cause: Optional[str] = None
-    fixes_applied: List[str] = Field(default=[], sa_column=Column(JSON))
+    fixes_applied: List[Any] = Field(default=[], sa_column=Column(JSON))
     runbook_refs: List[str] = Field(default=[], sa_column=Column(JSON))
+    
+    # Slack Interaction Tracking
+    acknowledged_by: Optional[str] = None
     
     # Evaluation Tracking
     expected_cause: Optional[str] = None
