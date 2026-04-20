@@ -24,7 +24,7 @@ from llama_index.core.vector_stores.types import MetadataFilters, ExactMatchFilt
 from llama_index.vector_stores.chroma import ChromaVectorStore
 from llama_index.llms.groq import Groq
 from llama_index.llms.openai import OpenAI
-from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+from llama_index.embeddings.openai import OpenAIEmbedding
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -58,8 +58,8 @@ def get_llm():
     else:
         return None
 
-# ─── Embedding Model (runs 100% locally, no API key needed) ──────────
-embedding_model = HuggingFaceEmbedding(model_name="BAAI/bge-small-en-v1.5")
+# ─── Embedding Model (API-based, lightweight for production) ────────
+embedding_model = OpenAIEmbedding(api_key=openai_api_key)
 Settings.embed_model = embedding_model
 
 # Set the LLM globally if available
