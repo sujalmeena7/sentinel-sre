@@ -1,4 +1,30 @@
-const API_BASE = '/api/v1';
+// ─────────────────────────────────────────────────────────────
+// API base resolution
+// ─────────────────────────────────────────────────────────────
+// In production (Vercel), call the Render backend DIRECTLY to avoid the
+// ~30s Vercel Edge proxy timeout that breaks LLM-heavy calls like
+// /incidents/analyze and /incidents/:id/postmortem.
+//
+// Local dev: if NEXT_PUBLIC_BACKEND_URL is unset, fall back to the
+// relative "/api/v1" path which is rewritten by next.config.mjs to
+// http://127.0.0.1:8000 during `next dev`.
+//
+// CORS: the backend already allows `*` origins with credentials off,
+// so direct browser → Render calls work without any server changes.
+// ─────────────────────────────────────────────────────────────
+const RAW_BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || '').trim().replace(/\/+$/, '');
+const API_BASE = RAW_BACKEND_URL ? `${RAW_BACKEND_URL}/api/v1` : '/api/v1';
+
+// Warm-up: if we're calling Render free tier, fire a cheap ping so the
+// first real request doesn't eat the 30-60s cold start.
+let _warmupFired = false;
+export function warmBackend(): void {
+  if (_warmupFired || !RAW_BACKEND_URL || typeof window === 'undefined') return;
+  _warmupFired = true;
+  // Non-blocking, no-await — any response (200/404/etc.) wakes the dyno.
+  fetch(`${RAW_BACKEND_URL}/`, { method: 'GET', cache: 'no-store', keepalive: true })
+    .catch(() => { /* silent */ });
+}
 
 export interface Incident {
   id: string;
@@ -47,13 +73,30 @@ export async function analyzeIncident(
   symptoms: string[],
   signals: { [key: string]: string }[]
 ): Promise<AnalysisResult> {
-  const res = await fetch(`${API_BASE}/incidents/analyze`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ incident_id, symptoms, signals }),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}/incidents/analyze`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ incident_id, symptoms, signals }),
+    });
+  } catch (networkErr: any) {
+    throw new Error(
+      `Network error while contacting the analysis engine. ` +
+      `If the backend is on Render free tier it may be cold-starting — please retry in ~30s. ` +
+      `(${networkErr?.message || 'fetch failed'})`
+    );
+  }
   if (!res.ok) {
-    const text = await res.text();
+    const text = await res.text().catch(() => '');
+    // Edge-proxy timeouts return 502 with empty body + empty statusText.
+    if (res.status === 502 && !text) {
+      throw new Error(
+        `Analysis failed: the request took too long and the upstream proxy timed out (502). ` +
+        `This usually means the backend is still processing the LLM call or cold-starting. ` +
+        `Please retry in a few seconds.`
+      );
+    }
     throw new Error(`Analysis failed: ${res.status} ${res.statusText} - ${text}`);
   }
   return res.json();

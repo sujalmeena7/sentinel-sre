@@ -35,9 +35,18 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 app = FastAPI(title="AI Root Cause Analyzer", version="0.2.0")
 
-# Allow frontend connections - Flexible CORS for production
-allowed_origins_raw = os.getenv("ALLOWED_ORIGINS", "*")
-allowed_origins = [origin.strip() for origin in allowed_origins_raw.split(",")]
+# Allow frontend connections — robust CORS for production.
+# If ALLOWED_ORIGINS is unset OR contains "*", we allow all origins.
+# Otherwise we split the comma list and drop empty entries.
+allowed_origins_raw = os.getenv("ALLOWED_ORIGINS", "*").strip()
+if not allowed_origins_raw or allowed_origins_raw == "*":
+    allowed_origins = ["*"]
+else:
+    allowed_origins = [o.strip() for o in allowed_origins_raw.split(",") if o.strip()]
+    if not allowed_origins:
+        allowed_origins = ["*"]
+
+logger.info(f"CORS allowed origins: {allowed_origins}")
 
 app.add_middleware(
     CORSMiddleware,

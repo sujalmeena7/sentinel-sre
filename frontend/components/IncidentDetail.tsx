@@ -7,7 +7,7 @@ import {
   GitBranch, FileText, ExternalLink, Tag, Brain,
   Play, UserCheck, ShieldCheck, Loader2, Activity
 } from 'lucide-react';
-import { Incident, handleChatOpsAction, fetchChatOpsLogs, ChatOpsActionType, ChatOpsLogEntry } from '@/lib/api';
+import { Incident, handleChatOpsAction, fetchChatOpsLogs, ChatOpsActionType, ChatOpsLogEntry, warmBackend } from '@/lib/api';
 import { CHATOPS_CONFIG } from '@/lib/chatops-config';
 
 interface IncidentDetailProps {
@@ -18,6 +18,12 @@ export default function IncidentDetail({ incident }: IncidentDetailProps) {
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [actionResult, setActionResult] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [activityLogs, setActivityLogs] = useState<ChatOpsLogEntry[]>([]);
+
+  // Wake the Render free-tier backend the moment the user opens an incident
+  // so the analysis click doesn't eat a 30-60s cold start.
+  useEffect(() => {
+    warmBackend();
+  }, []);
 
   // Fetch activity logs for this incident
   useEffect(() => {
