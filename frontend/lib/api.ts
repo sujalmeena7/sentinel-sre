@@ -1,4 +1,4 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
+const API_BASE = (process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, '') || '') + '/api/v1';
 
 export interface Incident {
   id: string;
