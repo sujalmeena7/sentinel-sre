@@ -17,9 +17,13 @@ Hardening features:
 import os
 import math
 import logging
+import threading
 from typing import Optional
 import chromadb
 from dotenv import load_dotenv
+
+# Provide a global lock for ChromaDB to prevent SQLite SIGABRT crashes under concurrency
+chroma_lock = threading.Lock()
 from llama_index.core import VectorStoreIndex, Document, StorageContext, Settings
 from llama_index.core.vector_stores.types import MetadataFilters, ExactMatchFilter
 from llama_index.vector_stores.chroma import ChromaVectorStore
@@ -161,18 +165,23 @@ def add_incident_to_index(incident):
             "user_id": str(incident.user_id) if getattr(incident, "user_id", None) else "unknown",
         },
     )
-    index = get_or_create_index()
-    index.insert(doc)
+    with chroma_lock:
+        index = get_or_create_index()
+        index.insert(doc)
     logger.info(f"📦 Indexed incident {incident.id}: label={label}, weight={weight:.2f}, failure_type={failure_type}, user_id={doc.metadata['user_id']}")
 
 
 def update_incident_in_index(incident):
     """Delete old embedding and replace with newly updated one (containing feedback)."""
-    try:
-        chroma_collection.delete(where={"incident_id": str(incident.id)})
-    except Exception:
-        pass
-    add_incident_to_index(incident)
+    with chroma_lock:
+        try:
+            chroma_collection.delete(where={"incident_id": str(incident.id)})
+        except Exception:
+            pass
+        try:
+            add_incident_to_index(incident)
+        except Exception as e:
+            logger.error(f"Failed to add incident to index during update: {e}")
     return True
 
 
@@ -200,8 +209,9 @@ def query_similar_incidents(service_name: str, symptoms: list, signals: list, us
 
     query_str = f"Symptoms: {', '.join(symptoms)}. Signals: {signals}."
 
-    if chroma_collection.count() == 0:
-        return [], [], []
+    with chroma_lock:
+        if chroma_collection.count() == 0:
+            return [], [], []
 
     index = get_or_create_index()
 
@@ -209,26 +219,27 @@ def query_similar_incidents(service_name: str, symptoms: list, signals: list, us
     # is layered on top to improve relevance, with a fallback that still
     # keeps the user_id filter intact.
     nodes = []
-    try:
-        filters = MetadataFilters(filters=[
-            ExactMatchFilter(key="user_id", value=str(user_id)),
-            ExactMatchFilter(key="service", value=service_name),
-        ])
-        retriever = index.as_retriever(similarity_top_k=RETRIEVAL_BATCH_SIZE, filters=filters)
-        nodes = retriever.retrieve(query_str)
-    except Exception:
-        pass
-
-    # Fallback: drop the service filter but KEEP user_id isolation.
-    if not nodes:
+    with chroma_lock:
         try:
             filters = MetadataFilters(filters=[
                 ExactMatchFilter(key="user_id", value=str(user_id)),
+                ExactMatchFilter(key="service", value=service_name),
             ])
             retriever = index.as_retriever(similarity_top_k=RETRIEVAL_BATCH_SIZE, filters=filters)
             nodes = retriever.retrieve(query_str)
         except Exception:
-            return [], [], []
+            pass
+
+        # Fallback: drop the service filter but KEEP user_id isolation.
+        if not nodes:
+            try:
+                filters = MetadataFilters(filters=[
+                    ExactMatchFilter(key="user_id", value=str(user_id)),
+                ])
+                retriever = index.as_retriever(similarity_top_k=RETRIEVAL_BATCH_SIZE, filters=filters)
+                nodes = retriever.retrieve(query_str)
+            except Exception:
+                return [], [], []
 
     # Defense-in-depth: post-filter any node whose metadata doesn't match
     # the calling tenant, in case the vector store filter ever slips.
