@@ -11,11 +11,15 @@ The final output is a ranked list of hypotheses with evidence,
 confidence scores, and recommended actions.
 """
 
+import logging
+import concurrent.futures
 from dataclasses import dataclass, field, asdict
 from typing import List, Dict, Any
 from rules_engine import evaluate_rules, RuleMatch, RuleRejection
 from anomaly_scorer import score_anomalies, AnomalyReport
 from rag_engine import query_similar_incidents, generate_hypothesis
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -63,6 +67,21 @@ def _parse_powershell_dict(item: Any) -> Dict[str, Any]:
 
 
 
+def _run_with_timeout(func, timeout: int, stage_name: str, *args, **kwargs):
+    logger.info(f"[{stage_name}] Entry - starting execution with {timeout}s timeout")
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(func, *args, **kwargs)
+        try:
+            result = future.result(timeout=timeout)
+            logger.info(f"[{stage_name}] Exit - completed successfully")
+            return result
+        except concurrent.futures.TimeoutError:
+            logger.error(f"[{stage_name}] Error - exceeded {timeout}s timeout")
+            raise TimeoutError(f"Stage '{stage_name}' timed out after {timeout} seconds")
+        except Exception as e:
+            logger.error(f"[{stage_name}] Error - {type(e).__name__}: {str(e)}")
+            raise
+
 def run_hybrid_analysis(
     service_name: str,
     symptoms: List[str],
@@ -86,98 +105,125 @@ def run_hybrid_analysis(
 
     # ─── STEP 1: Deterministic Rules ──────────────────────────────
     reasoning_chain.append("⚡ Step 1: Running deterministic rules engine...")
-    rule_matches, rule_rejections = evaluate_rules(symptoms, signals, changes)
-
-    for match in rule_matches:
-        all_hypotheses.append(
-            Hypothesis(
-                rank=0,  # will be set later
-                source="rules",
-                title=f"[Rule {match.rule_id}] {match.rule_name}",
-                description=match.hypothesis,
-                confidence=match.confidence,
-                evidence=match.evidence,
-                mitigation=match.mitigation,
-                long_term_fix=match.long_term_fix,
-                category=match.category,
-            )
+    rule_matches, rule_rejections = [], []
+    try:
+        rule_matches, rule_rejections = _run_with_timeout(
+            evaluate_rules, 30, "Rules Engine", symptoms, signals, changes
         )
-    reasoning_chain.append(f"  → {len(rule_matches)} rule(s) matched, {len(rule_rejections)} rule(s) rejected")
+        for match in rule_matches:
+            all_hypotheses.append(
+                Hypothesis(
+                    rank=0,  # will be set later
+                    source="rules",
+                    title=f"[Rule {match.rule_id}] {match.rule_name}",
+                    description=match.hypothesis,
+                    confidence=match.confidence,
+                    evidence=match.evidence,
+                    mitigation=match.mitigation,
+                    long_term_fix=match.long_term_fix,
+                    category=match.category,
+                )
+            )
+        reasoning_chain.append(f"  → {len(rule_matches)} rule(s) matched, {len(rule_rejections)} rule(s) rejected")
+    except Exception as e:
+        reasoning_chain.append(f"❌ Step 1 Failed: {str(e)}")
+        logger.exception("Rules Engine step failed")
 
     # ─── STEP 2: Anomaly Scoring ─────────────────────────────────
     reasoning_chain.append("📊 Step 2: Running statistical anomaly scorer...")
-    anomaly_report: AnomalyReport = score_anomalies(signals, symptoms)
+    anomaly_report = AnomalyReport(anomalies={}, summary="", overall_anomaly_score=0.0)
+    try:
+        anomaly_report = _run_with_timeout(
+            score_anomalies, 30, "Anomaly Scoring", signals, symptoms
+        )
 
-    # If we detect critical anomalies that weren't already caught by rules,
-    # generate an anomaly-based hypothesis
-    for anomaly in anomaly_report.anomalies:
-        if anomaly.is_anomalous:
-            # Check if this is already covered by a rule match
-            already_covered = any(
-                anomaly.metric_name.replace("_", " ") in h.title.lower()
-                for h in all_hypotheses
-            )
-            if not already_covered:
-                confidence = min(int(abs(anomaly.z_score) * 20), 85)
-                all_hypotheses.append(
-                    Hypothesis(
-                        rank=0,
-                        source="anomaly",
-                        title=f"Anomalous {anomaly.metric_name}",
-                        description=anomaly.description,
-                        confidence=confidence,
-                        evidence=[f"z-score: {anomaly.z_score}", f"severity: {anomaly.severity}"],
-                        mitigation=f"Investigate {anomaly.metric_name} — currently at {anomaly.current_value} vs baseline {anomaly.baseline_mean}",
-                        category="statistical",
-                    )
+        # If we detect critical anomalies that weren't already caught by rules,
+        # generate an anomaly-based hypothesis
+        for anomaly in getattr(anomaly_report, "anomalies", []):
+            if anomaly.is_anomalous:
+                # Check if this is already covered by a rule match
+                already_covered = any(
+                    anomaly.metric_name.replace("_", " ") in h.title.lower()
+                    for h in all_hypotheses
                 )
+                if not already_covered:
+                    confidence = min(int(abs(anomaly.z_score) * 20), 85)
+                    all_hypotheses.append(
+                        Hypothesis(
+                            rank=0,
+                            source="anomaly",
+                            title=f"Anomalous {anomaly.metric_name}",
+                            description=anomaly.description,
+                            confidence=confidence,
+                            evidence=[f"z-score: {anomaly.z_score}", f"severity: {anomaly.severity}"],
+                            mitigation=f"Investigate {anomaly.metric_name} — currently at {anomaly.current_value} vs baseline {anomaly.baseline_mean}",
+                            category="statistical",
+                        )
+                    )
 
-    reasoning_chain.append(f"  → Overall anomaly score: {anomaly_report.overall_anomaly_score}")
-    reasoning_chain.append(f"  → {sum(1 for a in anomaly_report.anomalies if a.is_anomalous)} anomalous metric(s)")
+        reasoning_chain.append(f"  → Overall anomaly score: {anomaly_report.overall_anomaly_score}")
+        reasoning_chain.append(f"  → {sum(1 for a in getattr(anomaly_report, 'anomalies', []) if a.is_anomalous)} anomalous metric(s)")
+    except Exception as e:
+        reasoning_chain.append(f"❌ Step 2 Failed: {str(e)}")
+        logger.exception("Anomaly Scoring step failed")
 
     # ─── STEP 3: RAG Retrieval ───────────────────────────────────
     reasoning_chain.append("🔍 Step 3: Querying ChromaDB for similar past incidents via Metadata Routing...")
-    positives, negatives, unrated = query_similar_incidents(service_name, symptoms, signals, user_id=user_id)
-    similar_incidents = positives + unrated + negatives  # Flattened for simple keyword matching backwards compatibility
-    reasoning_chain.append(f"  → RAG retrieved {len(positives)} positive, {len(negatives)} negative, and {len(unrated)} unrated historic examples.")
+    positives, negatives, unrated, similar_incidents = [], [], [], []
+    try:
+        positives, negatives, unrated = _run_with_timeout(
+            query_similar_incidents, 30, "RAG Retrieval", service_name, symptoms, signals, user_id=user_id
+        )
+        similar_incidents = positives + unrated + negatives  # Flattened for simple keyword matching backwards compatibility
+        reasoning_chain.append(f"  → RAG retrieved {len(positives)} positive, {len(negatives)} negative, and {len(unrated)} unrated historic examples.")
 
-    # Boost confidence of rule matches if RAG confirms similar past patterns
-    if similar_incidents:
-        for hyp in all_hypotheses:
-            if hyp.source == "rules":
-                # Check if the similar incident text mentions the same category
-                for sim_text in similar_incidents:
-                    sim_lower = sim_text.lower()
-                    if any(kw in sim_lower for kw in hyp.title.lower().split()):
-                        hyp.confidence = min(hyp.confidence + 5, 99)
-                        hyp.evidence.append("✅ Confirmed by similar past incident in RAG")
-                        break
+        # Boost confidence of rule matches if RAG confirms similar past patterns
+        if similar_incidents:
+            for hyp in all_hypotheses:
+                if hyp.source == "rules":
+                    # Check if the similar incident text mentions the same category
+                    for sim_text in similar_incidents:
+                        sim_lower = sim_text.lower()
+                        if any(kw in sim_lower for kw in hyp.title.lower().split()):
+                            hyp.confidence = min(hyp.confidence + 5, 99)
+                            hyp.evidence.append("✅ Confirmed by similar past incident in RAG")
+                            break
+    except Exception as e:
+        reasoning_chain.append(f"❌ Step 3 Failed: {str(e)}")
+        logger.exception("RAG Retrieval step failed")
 
     # ─── STEP 4: LLM Synthesis ───────────────────────────────────
     reasoning_chain.append("🧠 Step 4: Generating LLM narrative via Groq...")
+    llm_narrative = "LLM Synthesis failed or was skipped."
+    try:
+        # Build an enhanced prompt that includes the rules + anomaly context
+        rules_context = ""
+        if all_hypotheses:
+            rules_context = "\n\nThe deterministic rules engine identified these patterns:\n"
+            for h in all_hypotheses[:3]:
+                rules_context += f"- [{h.source.upper()}] {h.title} (confidence: {h.confidence}%): {h.description}\n"
 
-    # Build an enhanced prompt that includes the rules + anomaly context
-    rules_context = ""
-    if all_hypotheses:
-        rules_context = "\n\nThe deterministic rules engine identified these patterns:\n"
-        for h in all_hypotheses[:3]:
-            rules_context += f"- [{h.source.upper()}] {h.title} (confidence: {h.confidence}%): {h.description}\n"
+        anomaly_context = f"\n\nAnomaly Report: {getattr(anomaly_report, 'summary', '')}"
+        for a in getattr(anomaly_report, "anomalies", []):
+            if getattr(a, "is_anomalous", False):
+                anomaly_context += f"\n- {getattr(a, 'description', '')}"
 
-    anomaly_context = f"\n\nAnomaly Report: {anomaly_report.summary}"
-    for a in anomaly_report.anomalies:
-        if a.is_anomalous:
-            anomaly_context += f"\n- {a.description}"
-
-    # Generate enriched LLM narrative
-    llm_narrative = generate_hypothesis(
-        symptoms,
-        signals,
-        positives,
-        negatives,
-        unrated,
-        extra_context=rules_context + anomaly_context,
-    )
-    reasoning_chain.append("  → LLM narrative generated")
+        # Generate enriched LLM narrative
+        llm_narrative = _run_with_timeout(
+            generate_hypothesis,
+            60,  # Give LLM 60s
+            "LLM Synthesis",
+            symptoms,
+            signals,
+            positives,
+            negatives,
+            unrated,
+            extra_context=rules_context + anomaly_context,
+        )
+        reasoning_chain.append("  → LLM narrative generated")
+    except Exception as e:
+        reasoning_chain.append(f"❌ Step 4 Failed: {str(e)}")
+        logger.exception("LLM Synthesis step failed")
 
     # ─── STEP 5: Rank & Finalize ─────────────────────────────────
     reasoning_chain.append("🏆 Step 5: Ranking hypotheses by confidence...")

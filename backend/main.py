@@ -496,6 +496,12 @@ def run_analysis_task(
             session.commit()
 
 
+@app.get("/api/v1/incidents/analyze")
+def analyze_anomaly_get():
+    """Return an informative error instead of 405 Method Not Allowed."""
+    return JSONResponse(status_code=400, content={"detail": "Use POST with incident payload"})
+
+
 @app.post("/api/v1/incidents/analyze")
 def analyze_anomaly(
     req: AnalyzeRequest,
@@ -513,6 +519,7 @@ def analyze_anomaly(
             "status": "processing",
             "message": "Analysis already in progress",
             "incident_id": incident.id,
+            "task_id": incident.id,
         }
 
     incident.analysis_status = "processing"
@@ -534,6 +541,26 @@ def analyze_anomaly(
         "status": "processing",
         "message": "Analysis started",
         "incident_id": incident.id,
+        "task_id": incident.id,
+    }
+
+
+@app.get("/api/v1/incidents/analyze/{task_id}/status")
+def get_analyze_status(
+    task_id: str,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    """Polling endpoint for background analysis status."""
+    incident = session.get(Incident, task_id)
+    if not incident or (incident.user_id and incident.user_id != current_user.id):
+        raise HTTPException(status_code=404, detail="Task not found")
+        
+    return {
+        "task_id": task_id,
+        "status": incident.analysis_status,
+        "result": incident.analysis_result,
+        "error": incident.analysis_error
     }
 
 
