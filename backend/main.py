@@ -286,27 +286,35 @@ def ingest_incident(
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
-    incident = Incident(
-        id=payload.id or str(uuid4()),
-        user_id=current_user.id,
-        service=payload.service,
-        environment=payload.environment,
-        start_time=parse_dt(payload.start_time) or datetime.now(timezone.utc),
-        peak_time=parse_dt(payload.peak_time),
-        resolved_time=parse_dt(payload.resolved_time),
-        symptoms=payload.symptoms,
-        signals=payload.signals,
-        changes=payload.changes,
-        root_cause=payload.root_cause,
-        fixes_applied=payload.fixes_applied,
-        runbook_refs=payload.runbook_refs,
-    )
+    try:
+        incident = Incident(
+            id=payload.id or str(uuid4()),
+            user_id=current_user.id,
+            service=payload.service,
+            environment=payload.environment,
+            start_time=parse_dt(payload.start_time) or datetime.now(timezone.utc),
+            peak_time=parse_dt(payload.peak_time),
+            resolved_time=parse_dt(payload.resolved_time),
+            symptoms=payload.symptoms,
+            signals=payload.signals,
+            changes=payload.changes,
+            root_cause=payload.root_cause,
+            fixes_applied=payload.fixes_applied,
+            runbook_refs=payload.runbook_refs,
+        )
 
-    session.add(incident)
-    session.commit()
-    session.refresh(incident)
+        session.add(incident)
+        session.commit()
+        session.refresh(incident)
+    except Exception as e:
+        logger.error(f"Failed to ingest incident payload: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to persist incident")
 
-    launch_background(process_incident_background, incident)
+    try:
+        launch_background(process_incident_background, incident)
+    except Exception as e:
+        # Indexing is best-effort and should not fail ingestion.
+        logger.error(f"Failed to start indexing thread for incident {incident.id}: {e}", exc_info=True)
 
     return {"status": "accepted", "incident_id": str(incident.id)}
 
