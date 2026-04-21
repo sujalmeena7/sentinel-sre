@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import {   m as motion , AnimatePresence  } from 'framer-motion';
 import { fetchEvaluation } from '@/lib/api';
 import { BrainCircuit, CheckCircle2, XCircle, Activity, Server, Target } from 'lucide-react';
 

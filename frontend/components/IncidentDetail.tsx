@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import {   m as motion , AnimatePresence  } from 'framer-motion';
 import {
   Clock, AlertTriangle, Zap, CheckCircle2, Server,
   GitBranch, FileText, ExternalLink, Tag, Brain,

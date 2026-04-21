@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import { motion, useScroll, useTransform, AnimatePresence, useInView } from 'framer-motion'
+import {   m as motion , useScroll, useTransform, AnimatePresence, useInView  } from 'framer-motion'
 import {
   Brain,
   Zap,

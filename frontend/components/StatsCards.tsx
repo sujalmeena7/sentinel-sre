@@ -1,6 +1,6 @@
 'use client';
 
-import { motion } from 'framer-motion';
+import {   m as motion   } from 'framer-motion';
 import { Activity, AlertTriangle, CheckCircle2, Clock, Zap } from 'lucide-react';
 import { Incident } from '@/lib/api';
 

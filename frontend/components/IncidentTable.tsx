@@ -1,6 +1,6 @@
 'use client';
 
-import { motion } from 'framer-motion';
+import {   m as motion   } from 'framer-motion';
 import { AlertCircle, Server, Clock, ChevronRight, Flame } from 'lucide-react';
 import { Incident } from '@/lib/api';
 

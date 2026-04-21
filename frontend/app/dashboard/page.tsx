@@ -1,21 +1,24 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import {   m as motion , AnimatePresence  } from 'framer-motion';
 import {
   Activity, Brain, Shield, ArrowLeft,
   Radio, Cpu, RefreshCw, AlertTriangle
 } from 'lucide-react';
 import { Incident, fetchIncidents } from '@/lib/api';
+import dynamic from 'next/dynamic';
 import StatsCards from '@/components/StatsCards';
-import IncidentTable from '@/components/IncidentTable';
-import IncidentDetail from '@/components/IncidentDetail';
-import AIAnalysisPanel from '@/components/AIAnalysisPanel';
-import ChaosPanel from '@/components/ChaosPanel';
-import TelemetryPanel from '@/components/TelemetryPanel';
-import EvaluationDashboard from '@/components/EvaluationDashboard';
 import ServiceGraph from '@/components/ServiceGraph';
-import LearningDashboard from '@/components/LearningDashboard';
+import IncidentTable from '@/components/IncidentTable';
+
+// Lazy loading heavy components with framer-motion and SVG complexity
+const IncidentDetail = dynamic(() => import('@/components/IncidentDetail'), { ssr: false });
+const AIAnalysisPanel = dynamic(() => import('@/components/AIAnalysisPanel'), { ssr: false });
+const ChaosPanel = dynamic(() => import('@/components/ChaosPanel'), { ssr: false });
+const TelemetryPanel = dynamic(() => import('@/components/TelemetryPanel'), { ssr: false });
+const EvaluationDashboard = dynamic(() => import('@/components/EvaluationDashboard'), { ssr: false });
+const LearningDashboard = dynamic(() => import('@/components/LearningDashboard'), { ssr: false });
 
 export default function Dashboard() {
   const [incidents, setIncidents] = useState<Incident[]>([]);

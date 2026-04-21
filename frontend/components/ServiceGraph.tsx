@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import {   m as motion , AnimatePresence  } from 'framer-motion';
 import { Network, AlertTriangle, CheckCircle2, Activity } from 'lucide-react';
 
 // ═══════════════════════════════════════════════════════════════

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { motion } from 'framer-motion';
+import {   m as motion   } from 'framer-motion';
 import { Zap, Play, Activity, Database, Server } from 'lucide-react';
 import { triggerSimulation } from '@/lib/api';
 

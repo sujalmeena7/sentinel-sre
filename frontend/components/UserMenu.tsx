@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import {   m as motion , AnimatePresence  } from 'framer-motion';
 import { LogOut, KeyRound, Copy, Check, ChevronDown, User as UserIcon, Loader2, RefreshCw, X } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 

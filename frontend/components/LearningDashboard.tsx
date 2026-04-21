@@ -1,6 +1,6 @@
 'use client';
 
-import { motion } from 'framer-motion';
+import {   m as motion   } from 'framer-motion';
 import { BookOpen, TrendingUp, CheckCircle2, ShieldAlert, Award, Server } from 'lucide-react';
 import { Incident } from '@/lib/api';
 

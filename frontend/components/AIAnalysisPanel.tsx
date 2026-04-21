@@ -2,7 +2,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import {   m as motion , AnimatePresence  } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
 import {
   Brain, Loader2, Sparkles, Search, ShieldCheck,
