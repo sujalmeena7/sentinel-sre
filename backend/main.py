@@ -53,20 +53,15 @@ def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
         content={"detail": f"Rate limit exceeded: {exc.detail}"},
     )
 
-allowed_origins_raw = os.getenv("ALLOWED_ORIGINS", "*").strip()
-if not allowed_origins_raw or allowed_origins_raw == "*":
-    allowed_origins = ["*"]
-else:
-    allowed_origins = [o.strip() for o in allowed_origins_raw.split(",") if o.strip()]
-    if not allowed_origins:
-        allowed_origins = ["*"]
-
-logger.info(f"CORS allowed origins: {allowed_origins}")
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
-    allow_credentials=False,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "https://sentinel-sre.vercel.app",
+    ],
+    allow_origin_regex=r"https://sentinel-.*.vercel.app",
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
