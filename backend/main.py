@@ -4,8 +4,13 @@ import asyncio
 import logging
 import re
 import httpx
+import concurrent.futures
 from urllib.parse import urlparse
 from fastapi import FastAPI, Depends, BackgroundTasks, HTTPException, Security, Request
+
+# Create a global thread pool for heavy background tasks to avoid FastAPI BackgroundTasks 
+# blocking the ASGI lifecycle and tripping Gunicorn's 30s worker timeout.
+heavy_task_executor = concurrent.futures.ThreadPoolExecutor(max_workers=5)
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -528,7 +533,9 @@ def analyze_anomaly(
     session.add(incident)
     session.commit()
 
-    background_tasks.add_task(
+    # Move to a totally detached global thread pool to avoid 
+    # Starlette holding the Gunicorn worker ASGI cycle open and timing out
+    heavy_task_executor.submit(
         run_analysis_task,
         req.incident_id,
         req.symptoms,
