@@ -1,10 +1,10 @@
 
 import os
 import asyncio
+import threading
 import logging
 import re
 import httpx
-import concurrent.futures
 from urllib.parse import urlparse
 from fastapi import FastAPI, Depends, BackgroundTasks, HTTPException, Security, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -91,6 +91,12 @@ def parse_dt(val: Optional[str]) -> Optional[datetime]:
     if val:
         return datetime.fromisoformat(val)
     return None
+
+
+def launch_background(func, *args, **kwargs) -> None:
+    """Run work in a detached daemon thread from sync or async routes safely."""
+    thread = threading.Thread(target=func, args=args, kwargs=kwargs, daemon=True)
+    thread.start()
 
 
 security = HTTPBearer()
@@ -300,7 +306,7 @@ def ingest_incident(
     session.commit()
     session.refresh(incident)
 
-    asyncio.create_task(asyncio.to_thread(process_incident_background, incident))
+    launch_background(process_incident_background, incident)
 
     return {"status": "accepted", "incident_id": str(incident.id)}
 
@@ -429,7 +435,7 @@ def ingest_prometheus_alerts(
             session.add(incident)
             session.commit()
             session.refresh(incident)
-            asyncio.create_task(asyncio.to_thread(process_incident_background, incident))
+            launch_background(process_incident_background, incident)
             processed.append(str(incident.id))
             logger.info(f"Created new incident {incident.id} for fingerprint {fingerprint}")
 
@@ -552,15 +558,13 @@ def analyze_anomaly(
     # Move to a totally detached asyncio background task. 
     # This prevents Starlette's BackgroundTasks from holding the HTTP 
     # connection/ASGI cycle open and timing out Gunicorn or Render's proxy.
-    asyncio.create_task(
-        asyncio.to_thread(
-            run_analysis_task,
-            req.incident_id,
-            req.symptoms,
-            req.signals,
-            req.changes,
-            current_user.id,
-        )
+    launch_background(
+        run_analysis_task,
+        req.incident_id,
+        req.symptoms,
+        req.signals,
+        req.changes,
+        current_user.id,
     )
 
     return {
@@ -640,7 +644,7 @@ def submit_feedback(
     session.commit()
     session.refresh(incident)
 
-    asyncio.create_task(asyncio.to_thread(update_incident_in_index, incident))
+    launch_background(update_incident_in_index, incident)
 
     logger.info(f"Feedback received for {req.incident_id}. Score: {req.score}")
     return {"status": "success", "message": "Feedback recorded and RAG trained"}
@@ -677,7 +681,7 @@ def trigger_simulation(
         session.commit()
         session.refresh(incident)
 
-        background_tasks.add_task(process_incident_background, incident)
+        launch_background(process_incident_background, incident)
         logger.info(f"Chaos incident {incident.id} created for {req.service}")
         return {"status": "triggered", "incident_id": str(incident.id)}
     except Exception as e:
@@ -1289,7 +1293,7 @@ async def slack_interactive(
         payload = json.loads(payload_str)
         logger.info(f"Slack payload parsed: type={payload.get('type')}, actions={[a.get('action_id') for a in payload.get('actions', [])]}")
 
-        asyncio.create_task(asyncio.to_thread(process_slack_action, payload))
+        launch_background(process_slack_action, payload)
 
         return JSONResponse(status_code=200, content={"status": "accepted"})
     except json.JSONDecodeError as e:
