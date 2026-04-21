@@ -471,34 +471,54 @@ def run_analysis_task(
 ) -> None:
     """Background task - runs the heavy RAG + LLM pipeline OUTSIDE the request/response cycle."""
     import traceback
+    service = "unknown"
+    expected_cause = None
+    
+    # Briefly fetch required fields to avoid holding a DB connection for 60+ seconds
     with Session(engine) as session:
         incident = session.get(Incident, incident_id)
         if not incident:
             logger.error(f"[bg-analyze] Incident {incident_id} vanished before analysis")
             return
-        try:
-            result = run_hybrid_analysis(
-                incident.service, symptoms, signals, changes, user_id
-            )
+        service = incident.service
+        expected_cause = incident.expected_cause
+        
+    try:
+        # Run heavy ML operations completely detached from DB locks/connections
+        result = run_hybrid_analysis(
+            service, symptoms, signals, changes, user_id
+        )
+        payload = _serialize_analysis_result(result)
+        
+        predicted = "Unknown"
+        is_correct = False
+        if expected_cause:
+            predicted = result.hypotheses[0].title if result.hypotheses else "Unknown"
+            is_correct = expected_cause.lower() in predicted.lower()
 
-            payload = _serialize_analysis_result(result)
-
-            if incident.expected_cause:
-                predicted = result.hypotheses[0].title if result.hypotheses else "Unknown"
+        # Re-acquire DB connection only briefly to save results
+        with Session(engine) as session:
+            incident = session.get(Incident, incident_id)
+            if incident:
                 incident.predicted_cause = predicted
-                incident.is_correct = incident.expected_cause.lower() in predicted.lower()
-
-            incident.analysis_result = payload
-            incident.analysis_status = "completed"
-            incident.analysis_error = None
+                if expected_cause:
+                    incident.is_correct = is_correct
+                incident.analysis_result = payload
+                incident.analysis_status = "completed"
+                incident.analysis_error = None
+                session.add(incident)
+                session.commit()
             logger.info(f"[bg-analyze] Analysis completed for {incident_id}")
-        except Exception as e:
-            incident.analysis_status = "failed"
-            incident.analysis_error = str(e)[:2000]
-            logger.error(f"[bg-analyze] Analysis failed for {incident_id}: {traceback.format_exc()}")
-        finally:
-            session.add(incident)
-            session.commit()
+            
+    except Exception as e:
+        logger.error(f"[bg-analyze] Analysis failed for {incident_id}: {traceback.format_exc()}")
+        with Session(engine) as session:
+            incident = session.get(Incident, incident_id)
+            if incident:
+                incident.analysis_status = "failed"
+                incident.analysis_error = str(e)[:2000]
+                session.add(incident)
+                session.commit()
 
 
 @app.get("/api/v1/incidents/analyze")
