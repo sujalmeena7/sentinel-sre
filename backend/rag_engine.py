@@ -44,11 +44,19 @@ MAX_POSITIVES = 3             # Max positive examples sent to LLM
 MAX_NEGATIVES = 2             # Max negative examples sent to LLM
 MAX_UNRATED = 2               # Max unrated fallback examples
 
-# ─── ChromaDB Setup ──────────────────────────────────────────────────
-chroma_client = chromadb.PersistentClient(path="./chroma_db")
-chroma_collection = chroma_client.get_or_create_collection("incidents")
-vector_store = ChromaVectorStore(chroma_collection=chroma_collection)
-storage_context = StorageContext.from_defaults(vector_store=vector_store)
+_chroma_client = None
+_chroma_collection = None
+_vector_store = None
+_storage_context = None
+
+def get_chroma_components():
+    global _chroma_client, _chroma_collection, _vector_store, _storage_context
+    if _chroma_client is None:
+        _chroma_client = chromadb.PersistentClient(path="./chroma_db")
+        _chroma_collection = _chroma_client.get_or_create_collection("incidents")
+        _vector_store = ChromaVectorStore(chroma_collection=_chroma_collection)
+        _storage_context = StorageContext.from_defaults(vector_store=_vector_store)
+    return _chroma_client, _chroma_collection, _vector_store, _storage_context
 
 # ─── LLM Setup (manual fallback: Groq first, then OpenAI) ────────────
 groq_api_key = os.getenv("GROQ_API_KEY", "")
@@ -116,6 +124,7 @@ def _compute_weight(label: str, score: int, count: int) -> float:
 # ═══════════════════════════════════════════════════════════════════════
 
 def get_or_create_index():
+    _, chroma_collection, vector_store, storage_context = get_chroma_components()
     if chroma_collection.count() > 0:
         return VectorStoreIndex.from_vector_store(vector_store, storage_context=storage_context)
     else:
@@ -128,54 +137,82 @@ def get_or_create_index():
 
 def add_incident_to_index(incident):
     """Convert an incident to a LlamaIndex Document with production-grade metadata."""
-    score = incident.human_feedback_score or 0
-    count = incident.human_feedback_count or 0
+    _, chroma_collection, _, _ = get_chroma_components()
+    score = incident.get("human_feedback_score", 0) if isinstance(incident, dict) else (incident.human_feedback_score or 0)
+    count = incident.get("human_feedback_count", 0) if isinstance(incident, dict) else (incident.human_feedback_count or 0)
 
     label = _compute_label(score, count)
     weight = _compute_weight(label, score, count)
 
-    # Prefer ground truth (expected_cause) over AI prediction
-    failure_type = (
-        incident.expected_cause
-        or incident.root_cause
-        or incident.predicted_cause
-        or "unknown"
-    )
+    if isinstance(incident, dict):
+        failure_type = (
+            incident.get("expected_cause")
+            or incident.get("root_cause")
+            or incident.get("predicted_cause")
+            or "unknown"
+        )
+    else:
+        failure_type = (
+            getattr(incident, "expected_cause", None)
+            or getattr(incident, "root_cause", None)
+            or getattr(incident, "predicted_cause", None)
+            or "unknown"
+        )
+
+    if isinstance(incident, dict):
+        incident_id = incident.get("id")
+        service = incident.get("service")
+        environment = incident.get("environment")
+        symptoms = ", ".join(incident.get("symptoms", []))
+        signals = incident.get("signals")
+        changes = incident.get("changes")
+        fixes_applied = incident.get("fixes_applied")
+        runbook_refs = incident.get("runbook_refs")
+        user_id_val = str(incident.get("user_id")) if incident.get("user_id") else "unknown"
+    else:
+        incident_id = str(incident.id)
+        service = incident.service
+        environment = incident.environment
+        symptoms = ", ".join(incident.symptoms) if incident.symptoms else ""
+        signals = incident.signals
+        changes = incident.changes
+        fixes_applied = incident.fixes_applied
+        runbook_refs = incident.runbook_refs
+        user_id_val = str(incident.user_id) if getattr(incident, "user_id", None) else "unknown"
 
     narrative = (
-        f"Incident ID: {incident.id}\n"
-        f"Service: {incident.service} in {incident.environment}\n"
-        f"Symptoms: {', '.join(incident.symptoms)}\n"
-        f"Signals: {incident.signals}\n"
-        f"Changes: {incident.changes}\n"
+        f"Incident ID: {incident_id}\n"
+        f"Service: {service} in {environment}\n"
+        f"Symptoms: {symptoms}\n"
+        f"Signals: {signals}\n"
+        f"Changes: {changes}\n"
         f"Root Cause: {failure_type}\n"
-        f"Fixes Applied: {incident.fixes_applied}\n"
-        f"Runbook: {incident.runbook_refs}\n"
+        f"Fixes Applied: {fixes_applied}\n"
+        f"Runbook: {runbook_refs}\n"
     )
     doc = Document(
         text=narrative,
         metadata={
-            "incident_id": str(incident.id),
-            "service": incident.service,
+            "incident_id": incident_id,
+            "service": service,
             "label": label,
             "weight": weight,
             "failure_type": failure_type,
-            # Multi-tenant isolation key. Tenants can ONLY retrieve their
-            # own vectors via the MetadataFilter in query_similar_incidents.
-            "user_id": str(incident.user_id) if getattr(incident, "user_id", None) else "unknown",
+            "user_id": user_id_val,
         },
     )
     with chroma_lock:
         index = get_or_create_index()
         index.insert(doc)
-    logger.info(f"📦 Indexed incident {incident.id}: label={label}, weight={weight:.2f}, failure_type={failure_type}, user_id={doc.metadata['user_id']}")
-
+    logger.info(f"📦 Indexed incident {incident_id}: label={label}, weight={weight:.2f}, failure_type={failure_type}, user_id={doc.metadata['user_id']}")
 
 def update_incident_in_index(incident):
     """Delete old embedding and replace with newly updated one (containing feedback)."""
+    _, chroma_collection, _, _ = get_chroma_components()
+    incident_id = incident.get("id") if isinstance(incident, dict) else str(incident.id)
     with chroma_lock:
         try:
-            chroma_collection.delete(where={"incident_id": str(incident.id)})
+            chroma_collection.delete(where={"incident_id": incident_id})
         except Exception:
             pass
         try:
@@ -207,6 +244,7 @@ def query_similar_incidents(service_name: str, symptoms: list, signals: list, us
         logger.warning("query_similar_incidents called without user_id — returning empty results (fail-closed isolation).")
         return [], [], []
 
+    _, chroma_collection, _, _ = get_chroma_components()
     query_str = f"Symptoms: {', '.join(symptoms)}. Signals: {signals}."
 
     with chroma_lock:

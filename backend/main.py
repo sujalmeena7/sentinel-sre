@@ -271,12 +271,12 @@ def rotate_webhook_token(
     return AuthResponse(access_token=token, user=_public_user(current_user), webhook_token=raw)
 
 
-def process_incident_background(incident: Incident):
+def process_incident_background(incident: dict):
     try:
         add_incident_to_index(incident)
-        logger.info(f"Incident {incident.id} indexed into ChromaDB.")
+        logger.info(f"Incident {incident.get('id')} indexed into ChromaDB.")
     except Exception as e:
-        logger.error(f"Failed to index incident {incident.id}: {e}")
+        logger.error(f"Failed to index incident {incident.get('id')}: {e}")
 
 
 @app.post("/api/v1/incidents/ingest", response_model=Dict[str, Any])
@@ -306,12 +306,16 @@ def ingest_incident(
         session.add(incident)
         session.commit()
         session.refresh(incident)
+        # Detach ORM object to dict before passing to background thread
+        incident_dict = incident.__dict__.copy()
+        if "_sa_instance_state" in incident_dict:
+            del incident_dict["_sa_instance_state"]
     except Exception as e:
         logger.error(f"Failed to ingest incident payload: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to persist incident")
 
     try:
-        launch_background(process_incident_background, incident)
+        launch_background(process_incident_background, incident_dict)
     except Exception as e:
         # Indexing is best-effort and should not fail ingestion.
         logger.error(f"Failed to start indexing thread for incident {incident.id}: {e}", exc_info=True)
@@ -443,7 +447,13 @@ def ingest_prometheus_alerts(
             session.add(incident)
             session.commit()
             session.refresh(incident)
-            launch_background(process_incident_background, incident)
+            
+            # Detach ORM object to dict before passing to background thread
+            incident_dict = incident.__dict__.copy()
+            if "_sa_instance_state" in incident_dict:
+                del incident_dict["_sa_instance_state"]
+            
+            launch_background(process_incident_background, incident_dict)
             processed.append(str(incident.id))
             logger.info(f"Created new incident {incident.id} for fingerprint {fingerprint}")
 
@@ -688,8 +698,13 @@ def trigger_simulation(
         session.add(incident)
         session.commit()
         session.refresh(incident)
+        
+        # Detach ORM object to dict before passing to background thread
+        incident_dict = incident.__dict__.copy()
+        if "_sa_instance_state" in incident_dict:
+            del incident_dict["_sa_instance_state"]
 
-        launch_background(process_incident_background, incident)
+        launch_background(process_incident_background, incident_dict)
         logger.info(f"Chaos incident {incident.id} created for {req.service}")
         return {"status": "triggered", "incident_id": str(incident.id)}
     except Exception as e:
