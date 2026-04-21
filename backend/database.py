@@ -45,6 +45,12 @@ def init_db():
         # Index on user_id for tenant-scoped queries (both dialects).
         _safe_ddl(conn, "CREATE INDEX IF NOT EXISTS ix_incident_user_id ON incident (user_id)")
 
+        # ── Async analysis tracking (non-blocking analyze pipeline) ──
+        _safe_ddl(conn, "ALTER TABLE incident ADD COLUMN analysis_status VARCHAR DEFAULT 'idle'")
+        _safe_ddl(conn, "ALTER TABLE incident ADD COLUMN analysis_result JSON")
+        _safe_ddl(conn, "ALTER TABLE incident ADD COLUMN analysis_error VARCHAR")
+        _safe_ddl(conn, "CREATE INDEX IF NOT EXISTS ix_incident_analysis_status ON incident (analysis_status)")
+
 
 def get_session():
     with Session(engine) as session:

@@ -53,3 +53,13 @@ class Incident(SQLModel, table=True):
     human_feedback_score: int = Field(default=0)
     human_feedback_count: int = Field(default=0)
     human_feedback_comment: Optional[str] = None
+
+    # ── Async Analysis Tracking ──────────────────────────────────
+    # Drives the non-blocking /incidents/analyze flow.
+    #   "idle"       → never analyzed (default)
+    #   "processing" → background task running (RAG + LLM)
+    #   "completed"  → analysis_result is populated
+    #   "failed"     → analysis_error has the reason
+    analysis_status: str = Field(default="idle", index=True)
+    analysis_result: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    analysis_error: Optional[str] = None

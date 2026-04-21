@@ -1,3 +1,4 @@
+
 import os
 import asyncio
 import logging
@@ -40,7 +41,6 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 app = FastAPI(title="AI Root Cause Analyzer", version="0.3.0")
 
-# ─── Rate limiter (in-memory, fine for single-worker Render free tier) ───
 limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
 
@@ -52,9 +52,6 @@ def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
         content={"detail": f"Rate limit exceeded: {exc.detail}"},
     )
 
-# Allow frontend connections — robust CORS for production.
-# If ALLOWED_ORIGINS is unset OR contains "*", we allow all origins.
-# Otherwise we split the comma list and drop empty entries.
 allowed_origins_raw = os.getenv("ALLOWED_ORIGINS", "*").strip()
 if not allowed_origins_raw or allowed_origins_raw == "*":
     allowed_origins = ["*"]
@@ -68,13 +65,12 @@ logger.info(f"CORS allowed origins: {allowed_origins}")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
-    allow_credentials=False,  # Set to False to allow "*" if needed and avoid browser credential blocks
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
-# Pydantic model for the ingest request (handles string-to-datetime conversion)
 class IncidentIngest(BaseModel):
     id: Optional[str] = None
     service: str
@@ -95,8 +91,9 @@ def parse_dt(val: Optional[str]) -> Optional[datetime]:
         return datetime.fromisoformat(val)
     return None
 
-# --- Telemetry Auth ---
+
 security = HTTPBearer()
+
 
 def verify_telemetry_token(credentials: HTTPAuthorizationCredentials = Security(security)):
     expected_token = os.getenv("TELEMETRY_SECRET_TOKEN", "change-me-in-production")
@@ -108,13 +105,14 @@ def verify_telemetry_token(credentials: HTTPAuthorizationCredentials = Security(
         )
     return credentials.credentials
 
-# --- Prometheus Payload Models ---
+
 class PrometheusAlert(BaseModel):
     status: str
     labels: Dict[str, str] = {}
     annotations: Dict[str, str] = {}
     startsAt: Optional[str] = None
     endsAt: Optional[str] = None
+
 
 class PrometheusPayload(BaseModel):
     receiver: str
@@ -129,11 +127,6 @@ def on_startup():
 
 
 def _seed_admin_and_backfill() -> None:
-    """Idempotently create an admin user and assign orphan incidents to it.
-    - Reads ADMIN_EMAIL / ADMIN_PASSWORD from env (defaults for dev).
-    - Creates the admin if missing; updates password hash if it changed.
-    - Backfills any pre-existing incidents (user_id IS NULL) to the admin.
-    """
     admin_email = os.getenv("ADMIN_EMAIL", "admin@sentinel.local").strip().lower()
     admin_password = os.getenv("ADMIN_PASSWORD", "admin123")
 
@@ -151,20 +144,18 @@ def _seed_admin_and_backfill() -> None:
             session.add(admin)
             session.commit()
             session.refresh(admin)
-            logger.info(f"🛡️  Admin user seeded: {admin_email}")
+            logger.info(f"Admin user seeded: {admin_email}")
             logger.info(
-                f"🔑 Admin webhook token (save this — shown once):\n   {raw_webhook}\n"
+                f"Admin webhook token (save this - shown once):\n   {raw_webhook}\n"
                 f"   Use it at POST /api/v1/telemetry/prometheus/{raw_webhook}"
             )
         else:
-            # Rotate password hash if ADMIN_PASSWORD changed in env.
             if not verify_password(admin_password, admin.password_hash):
                 admin.password_hash = hash_password(admin_password)
                 session.add(admin)
                 session.commit()
-                logger.info("🔄 Admin password hash refreshed from env.")
+                logger.info("Admin password hash refreshed from env.")
 
-        # Backfill orphan incidents (created before multi-tenancy shipped).
         orphan_count = session.exec(
             select(Incident).where(Incident.user_id == None)  # noqa: E711
         ).all()
@@ -173,17 +164,13 @@ def _seed_admin_and_backfill() -> None:
                 inc.user_id = admin.id
                 session.add(inc)
             session.commit()
-            logger.info(f"🧩 Backfilled {len(orphan_count)} legacy incidents → admin.")
+            logger.info(f"Backfilled {len(orphan_count)} legacy incidents -> admin.")
 
 
 @app.get("/")
 def read_root():
-    return {"status": "ok", "message": "Root Cause Analyzer API v0.3.0 — Multi-Tenant SaaS"}
+    return {"status": "ok", "message": "Root Cause Analyzer API v0.3.0 - Multi-Tenant SaaS"}
 
-
-# ═══════════════════════════════════════════════════════════════════════
-# AUTH ENDPOINTS (register / login / me)
-# ═══════════════════════════════════════════════════════════════════════
 
 class RegisterRequest(BaseModel):
     email: EmailStr
@@ -200,19 +187,17 @@ class AuthResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user: Dict[str, Any]
-    # Raw webhook token — shown ONCE on register or rotate.
     webhook_token: Optional[str] = None
 
 
 def _public_user(user: User, webhook_token: Optional[str] = None) -> Dict[str, Any]:
-    payload = {
+    return {
         "id": user.id,
         "email": user.email,
         "name": user.name,
         "role": user.role,
         "created_at": user.created_at.isoformat() if user.created_at else None,
     }
-    return payload
 
 
 @app.post("/api/v1/auth/register", response_model=AuthResponse)
@@ -239,7 +224,7 @@ def register(request: Request, body: RegisterRequest, session: Session = Depends
     session.refresh(user)
 
     token = create_access_token(user.id, user.email)
-    logger.info(f"🆕 User registered: {email}")
+    logger.info(f"User registered: {email}")
     return AuthResponse(
         access_token=token,
         user=_public_user(user),
@@ -256,7 +241,7 @@ def login(request: Request, body: LoginRequest, session: Session = Depends(get_s
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
     token = create_access_token(user.id, user.email)
-    logger.info(f"🔓 Login: {email}")
+    logger.info(f"Login: {email}")
     return AuthResponse(access_token=token, user=_public_user(user))
 
 
@@ -270,8 +255,6 @@ def rotate_webhook_token(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
-    """Generate a fresh webhook token for the calling user. Raw value is
-    returned exactly once in the response."""
     raw = generate_webhook_token()
     current_user.webhook_token_hash = hash_webhook_token(raw)
     session.add(current_user)
@@ -282,12 +265,11 @@ def rotate_webhook_token(
 
 
 def process_incident_background(incident: Incident):
-    """Background task: embed the incident into ChromaDB."""
     try:
         add_incident_to_index(incident)
-        logger.info(f"✅ Incident {incident.id} indexed into ChromaDB.")
+        logger.info(f"Incident {incident.id} indexed into ChromaDB.")
     except Exception as e:
-        logger.error(f"❌ Failed to index incident {incident.id}: {e}")
+        logger.error(f"Failed to index incident {incident.id}: {e}")
 
 
 @app.post("/api/v1/incidents/ingest", response_model=Dict[str, Any])
@@ -297,8 +279,6 @@ def ingest_incident(
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
-    """Ingest an incident payload. Scoped to the authenticated tenant.
-    Triggers vector embedding in the background."""
     incident = Incident(
         id=payload.id or str(uuid4()),
         user_id=current_user.id,
@@ -333,17 +313,11 @@ def ingest_prometheus_alerts(
     background_tasks: BackgroundTasks,
     session: Session = Depends(get_session),
 ):
-    """Ingest real-time Prometheus alerts — scoped to a single tenant via
-    their unique webhook_token in the URL path.
-
-    Rate-limited to 120 req/min per client IP to prevent abuse.
-    The token is never stored in plaintext; only its SHA-256 hash.
-    """
     owner = get_user_by_webhook_token(webhook_token, session)
     if not owner:
         raise HTTPException(status_code=401, detail="Invalid webhook token")
 
-    logger.info(f"📡 Prometheus webhook for user={owner.email} with {len(payload.alerts)} alerts")
+    logger.info(f"Prometheus webhook for user={owner.email} with {len(payload.alerts)} alerts")
 
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(minutes=15)
@@ -352,12 +326,10 @@ def ingest_prometheus_alerts(
     firing_alerts_by_fingerprint = {}
     resolved_alerts = []
 
-    # 1. Parse and categorize alerts
     for alert in payload.alerts:
         service = alert.labels.get("service") or alert.labels.get("job") or "unknown-service"
         alertname = alert.labels.get("alertname", "unknown")
 
-        # 2. Map severities to our internal model
         raw_sev = alert.labels.get("severity", "unknown").lower()
         if raw_sev in ["critical", "fatal", "page", "emergency"]:
             sev = "severe"
@@ -367,8 +339,6 @@ def ingest_prometheus_alerts(
             sev = "low"
 
         alert.labels["mapped_severity"] = sev
-        # Fingerprint includes service + alertname + mapped severity so
-        # alerts of different severity aren't incorrectly grouped.
         fingerprint = f"{service}::{alertname}::{sev}"
 
         if alert.status == "resolved":
@@ -378,7 +348,6 @@ def ingest_prometheus_alerts(
                 firing_alerts_by_fingerprint[fingerprint] = []
             firing_alerts_by_fingerprint[fingerprint].append((service, alertname, alert))
 
-    # 3. Handle resolved alerts to close incidents — tenant-scoped
     for service, alertname in resolved_alerts:
         open_incidents = session.exec(
             select(Incident)
@@ -392,17 +361,13 @@ def ingest_prometheus_alerts(
                 inc.resolved_time = now
                 session.add(inc)
                 processed.append(str(inc.id))
-                logger.info(f"✅ Resolved incident {inc.id} for {service} due to resolved alert")
+                logger.info(f"Resolved incident {inc.id} for {service} due to resolved alert")
     session.commit()
 
-    # 4. Handle firing alerts with fingerprint deduplication — tenant-scoped
     for fingerprint, data_list in firing_alerts_by_fingerprint.items():
         service = data_list[0][0]
         alertname = data_list[0][1]
         alerts = [item[2] for item in data_list]
-        # Fingerprint format: "service::alertname::severity" — extract the
-        # severity so that existing-incident lookup is also severity-aware
-        # (otherwise two calls with different severities merge into one).
         current_sev = fingerprint.rsplit("::", 1)[-1]
 
         open_incidents = session.exec(
@@ -414,10 +379,6 @@ def ingest_prometheus_alerts(
             .order_by(Incident.start_time.desc())
         ).all()
 
-        # Strict fingerprint matching: only append if an incident exists for
-        # same service AND metric AND severity. This keeps alerts of
-        # different severity (e.g. warning→critical escalation) in separate
-        # incidents so operators can see the escalation as a new event.
         recent_incident = next(
             (
                 inc for inc in open_incidents
@@ -452,7 +413,7 @@ def ingest_prometheus_alerts(
             session.add(recent_incident)
             session.commit()
             processed.append(str(recent_incident.id))
-            logger.info(f"🔄 Appended alerts to incident {recent_incident.id} with fingerprint {fingerprint}")
+            logger.info(f"Appended alerts to incident {recent_incident.id} with fingerprint {fingerprint}")
         else:
             env = alerts[0].labels.get("environment", "production")
             incident = Incident(
@@ -469,7 +430,7 @@ def ingest_prometheus_alerts(
             session.refresh(incident)
             background_tasks.add_task(process_incident_background, incident)
             processed.append(str(incident.id))
-            logger.info(f"🚨 Created new incident {incident.id} for fingerprint {fingerprint}")
+            logger.info(f"Created new incident {incident.id} for fingerprint {fingerprint}")
 
     return {"status": "accepted", "incidents_processed": processed}
 
@@ -481,67 +442,124 @@ class AnalyzeRequest(BaseModel):
     changes: List[Union[str, Dict[str, Any]]] = []
 
 
-@app.post("/api/v1/incidents/analyze")
-async def analyze_anomaly(
-    req: AnalyzeRequest,
-    session: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user),
-):
+def _serialize_analysis_result(result) -> Dict[str, Any]:
+    """Convert HybridAnalysisResult dataclass into the JSON dict shape
+    the frontend already consumes (matches the previous inline response)."""
+    import dataclasses
+    return {
+        "hypotheses": [dataclasses.asdict(h) for h in result.hypotheses],
+        "anomaly_report": result.anomaly_report,
+        "similar_historic_incidents": result.similar_incidents,
+        "llm_narrative": result.llm_narrative,
+        "reasoning_chain": result.reasoning_chain,
+        "analysis_breakdown": result.analysis_breakdown,
+        "rejected_hypotheses": result.rejected_hypotheses,
+    }
+
+
+def run_analysis_task(
+    incident_id: str,
+    symptoms: List[str],
+    signals: List[Any],
+    changes: List[Any],
+    user_id: str,
+) -> None:
+    """Background task - runs the heavy RAG + LLM pipeline OUTSIDE the request/response cycle."""
     import traceback
-    from fastapi.responses import JSONResponse
-    try:
-        """
-        HYBRID analysis pipeline — tenant-scoped.
-        """
-        incident = session.get(Incident, req.incident_id)
-        if not incident or (incident.user_id and incident.user_id != current_user.id):
-            raise HTTPException(status_code=404, detail="Incident not found")
-        service_name = incident.service
+    with Session(engine) as session:
+        incident = session.get(Incident, incident_id)
+        if not incident:
+            logger.error(f"[bg-analyze] Incident {incident_id} vanished before analysis")
+            return
+        try:
+            result = run_hybrid_analysis(
+                incident.service, symptoms, signals, changes, user_id
+            )
 
-        # Run the heavy blocking hybrid analysis in a threadpool to prevent UI lockup
-        result = await asyncio.to_thread(
-            run_hybrid_analysis,
-            service_name,
-            req.symptoms,
-            req.signals,
-            req.changes,
-            current_user.id,
-        )
+            payload = _serialize_analysis_result(result)
 
-        # Evaluation Tracker
-        incident = session.get(Incident, req.incident_id)
-        if incident and incident.expected_cause:
-            predicted = result.hypotheses[0].title if result.hypotheses else "Unknown"
-            incident.predicted_cause = predicted
-            incident.is_correct = incident.expected_cause.lower() in predicted.lower()
+            if incident.expected_cause:
+                predicted = result.hypotheses[0].title if result.hypotheses else "Unknown"
+                incident.predicted_cause = predicted
+                incident.is_correct = incident.expected_cause.lower() in predicted.lower()
+
+            incident.analysis_result = payload
+            incident.analysis_status = "completed"
+            incident.analysis_error = None
+            logger.info(f"[bg-analyze] Analysis completed for {incident_id}")
+        except Exception as e:
+            incident.analysis_status = "failed"
+            incident.analysis_error = str(e)[:2000]
+            logger.error(f"[bg-analyze] Analysis failed for {incident_id}: {traceback.format_exc()}")
+        finally:
             session.add(incident)
             session.commit()
 
 
+@app.post("/api/v1/incidents/analyze")
+def analyze_anomaly(
+    req: AnalyzeRequest,
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    """NON-BLOCKING analyze endpoint - returns instantly. Heavy pipeline runs in background."""
+    incident = session.get(Incident, req.incident_id)
+    if not incident or (incident.user_id and incident.user_id != current_user.id):
+        raise HTTPException(status_code=404, detail="Incident not found")
+
+    if incident.analysis_status == "processing":
         return {
-            "hypotheses": [__import__('dataclasses').asdict(h) for h in result.hypotheses],
-            "anomaly_report": result.anomaly_report,
-            "similar_historic_incidents": result.similar_incidents,
-            "llm_narrative": result.llm_narrative,
-            "reasoning_chain": result.reasoning_chain,
-            "analysis_breakdown": result.analysis_breakdown,
-            "rejected_hypotheses": result.rejected_hypotheses,
+            "status": "processing",
+            "message": "Analysis already in progress",
+            "incident_id": incident.id,
         }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Analysis failed: {traceback.format_exc()}")
-        return JSONResponse(status_code=500, content={"detail": traceback.format_exc()})
+
+    incident.analysis_status = "processing"
+    incident.analysis_error = None
+    incident.analysis_result = None
+    session.add(incident)
+    session.commit()
+
+    background_tasks.add_task(
+        run_analysis_task,
+        req.incident_id,
+        req.symptoms,
+        req.signals,
+        req.changes,
+        current_user.id,
+    )
+
+    return {
+        "status": "processing",
+        "message": "Analysis started",
+        "incident_id": incident.id,
+    }
+
+
+@app.get("/api/v1/incidents/{incident_id}")
+def get_incident(
+    incident_id: str,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    """Fetch a single incident - used by the frontend to poll analysis_status / analysis_result."""
+    incident = session.get(Incident, incident_id)
+    if not incident or (incident.user_id and incident.user_id != current_user.id):
+        raise HTTPException(status_code=404, detail="Incident not found")
+    return incident
 
 
 class FeedbackRequest(BaseModel):
     incident_id: str
-    score: int  # 1 for upvote, -1 for downvote
+    score: int
     comment: Optional[str] = None
 
+
 class DispatchRequest(BaseModel):
-    destination: str  # "slack" or "teams"
+    destination: str
     webhook_override: Optional[str] = None
+
 
 @app.post("/api/v1/incidents/feedback")
 def submit_feedback(
@@ -562,7 +580,6 @@ def submit_feedback(
 
     incident.human_feedback_score += req.score
     incident.human_feedback_count += 1
-    # Maintain the latest comment
     if req.comment:
         incident.human_feedback_comment = req.comment
 
@@ -570,10 +587,9 @@ def submit_feedback(
     session.commit()
     session.refresh(incident)
 
-    # Re-index with feedback context!
     background_tasks.add_task(update_incident_in_index, incident)
 
-    logger.info(f"👍👎 Feedback received for {req.incident_id}. Score: {req.score}")
+    logger.info(f"Feedback received for {req.incident_id}. Score: {req.score}")
     return {"status": "success", "message": "Feedback recorded and RAG trained"}
 
 
@@ -590,7 +606,7 @@ def trigger_simulation(
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
-    logger.info(f"⚡ Chaos trigger received: service={req.service}, failure={req.failure_type}, severity={req.severity} by {current_user.email}")
+    logger.info(f"Chaos trigger: service={req.service}, failure={req.failure_type}, severity={req.severity} by {current_user.email}")
     try:
         inc_data = generate_deterministic_incident(req.service, req.failure_type, req.severity)
 
@@ -609,10 +625,10 @@ def trigger_simulation(
         session.refresh(incident)
 
         background_tasks.add_task(process_incident_background, incident)
-        logger.info(f"✅ Chaos incident {incident.id} created for {req.service}")
+        logger.info(f"Chaos incident {incident.id} created for {req.service}")
         return {"status": "triggered", "incident_id": str(incident.id)}
     except Exception as e:
-        logger.error(f"❌ Chaos trigger failed: {e}")
+        logger.error(f"Chaos trigger failed: {e}")
         raise
 
 
@@ -667,7 +683,7 @@ def _truncate_text(text: str, limit: int) -> str:
     clipped = text[:limit]
     if " " in clipped:
         clipped = clipped.rsplit(" ", 1)[0]
-    return clipped + "…"
+    return clipped + "..."
 
 
 def _markdown_sections(markdown: str) -> Dict[str, str]:
@@ -697,14 +713,12 @@ def _extract_section(sections: Dict[str, str], candidates: List[str], fallback: 
 
 
 def _incident_severity(incident: Incident) -> str:
-    # 1) Human feedback is the strongest severity signal.
     feedback_score = incident.human_feedback_score or 0
     if feedback_score >= 8:
         return "severe"
     if feedback_score >= 3:
         return "moderate"
 
-    # 2) Signal severity (if present in dynamic signal payloads).
     signal_severity_rank = {"low": 1, "moderate": 2, "medium": 2, "high": 3, "critical": 4, "severe": 4}
     highest_signal_rank = 0
     for sig in (incident.signals if isinstance(incident.signals, list) else []):
@@ -718,14 +732,12 @@ def _incident_severity(incident: Incident) -> str:
     if highest_signal_rank >= 2:
         return "moderate"
 
-    # 3) Symptom volume heuristic.
     symptom_count = len(incident.symptoms) if isinstance(incident.symptoms, list) else 0
     if symptom_count >= 6:
         return "severe"
     if symptom_count >= 3:
         return "moderate"
 
-    # 4) Last-resort fallback only.
     if incident.expected_cause:
         return "moderate"
     return "low"
@@ -753,9 +765,8 @@ def _is_override_webhook_allowed(webhook_override: str, destination: str) -> boo
         return False
 
     for allowed in allowed_hosts:
-        # Supports exact host and simple wildcard prefix patterns like *.slack.com
         if allowed.startswith("*."):
-            suffix = allowed[1:]  # keep leading dot for strict suffix matching
+            suffix = allowed[1:]
             if host.endswith(suffix):
                 return True
         elif host == allowed:
@@ -768,7 +779,7 @@ def _slack_payload(markdown: str, incident: Incident) -> Dict[str, Any]:
     severity = _incident_severity(incident)
     accent = "#E01E5A" if severity == "severe" else "#FF8C00"
     timestamp = incident.start_time.isoformat() if incident.start_time else "Unknown"
-    title = f"Postmortem • {incident.service}"
+    title = f"Postmortem - {incident.service}"
 
     impact = _extract_section(sections, ["impact"], "Impact details unavailable.")
     root_cause = _extract_section(sections, ["root cause"], "Root cause pending.")
@@ -782,39 +793,22 @@ def _slack_payload(markdown: str, incident: Incident) -> Dict[str, Any]:
                 {
                     "type": "mrkdwn",
                     "text": (
-                        f"*Incident:* `{incident.id[:8]}`  •  *Env:* `{incident.environment}`  •  "
-                        f"*Severity:* `{severity}`  •  *Start:* `{timestamp}`"
+                        f"*Incident:* `{incident.id[:8]}`  *Env:* `{incident.environment}`  "
+                        f"*Severity:* `{severity}`  *Start:* `{timestamp}`"
                     )
                 }
             ],
         },
         {"type": "divider"},
-        {"type": "section", "text": {"type": "mrkdwn", "text": f"*🚨 Impact*\n{_truncate_text(impact, 2900)}"}},
-        {"type": "section", "text": {"type": "mrkdwn", "text": f"*🔍 Root Cause*\n{_truncate_text(root_cause, 2900)}"}},
-        {"type": "section", "text": {"type": "mrkdwn", "text": f"*✅ Actions*\n{_truncate_text(actions, 2900)}"}},
+        {"type": "section", "text": {"type": "mrkdwn", "text": f"*Impact*\n{_truncate_text(impact, 2900)}"}},
+        {"type": "section", "text": {"type": "mrkdwn", "text": f"*Root Cause*\n{_truncate_text(root_cause, 2900)}"}},
+        {"type": "section", "text": {"type": "mrkdwn", "text": f"*Actions*\n{_truncate_text(actions, 2900)}"}},
         {
             "type": "actions",
             "elements": [
-                {
-                    "type": "button",
-                    "text": {"type": "plain_text", "text": "Acknowledge"},
-                    "action_id": "acknowledge_incident",
-                    "value": str(incident.id)
-                },
-                {
-                    "type": "button",
-                    "text": {"type": "plain_text", "text": "Execute Runbook"},
-                    "style": "primary",
-                    "action_id": "execute_runbook",
-                    "value": str(incident.id)
-                },
-                {
-                    "type": "button",
-                    "text": {"type": "plain_text", "text": "Resolve"},
-                    "style": "danger",
-                    "action_id": "mark_resolved",
-                    "value": str(incident.id)
-                }
+                {"type": "button", "text": {"type": "plain_text", "text": "Acknowledge"}, "action_id": "acknowledge_incident", "value": str(incident.id)},
+                {"type": "button", "text": {"type": "plain_text", "text": "Execute Runbook"}, "style": "primary", "action_id": "execute_runbook", "value": str(incident.id)},
+                {"type": "button", "text": {"type": "plain_text", "text": "Resolve"}, "style": "danger", "action_id": "mark_resolved", "value": str(incident.id)}
             ]
         }
     ]
@@ -840,7 +834,7 @@ def _teams_payload(markdown: str, incident: Incident) -> Dict[str, Any]:
         "@context": "http://schema.org/extensions",
         "summary": f"Incident postmortem for {incident.service}",
         "themeColor": theme_color,
-        "title": f"Postmortem • {incident.service}",
+        "title": f"Postmortem - {incident.service}",
         "text": (
             f"**Incident:** `{incident.id[:8]}`\n\n"
             f"**Environment:** `{incident.environment}`\n\n"
@@ -848,18 +842,14 @@ def _teams_payload(markdown: str, incident: Incident) -> Dict[str, Any]:
             f"**Start:** `{timestamp}`"
         ),
         "sections": [
-            {"activityTitle": "🚨 Impact", "text": _truncate_text(impact, 7000), "markdown": True},
-            {"activityTitle": "🔍 Root Cause", "text": _truncate_text(root_cause, 7000), "markdown": True},
-            {"activityTitle": "✅ Actions", "text": _truncate_text(actions, 7000), "markdown": True},
+            {"activityTitle": "Impact", "text": _truncate_text(impact, 7000), "markdown": True},
+            {"activityTitle": "Root Cause", "text": _truncate_text(root_cause, 7000), "markdown": True},
+            {"activityTitle": "Actions", "text": _truncate_text(actions, 7000), "markdown": True},
         ],
     }
 
 
 async def _generate_postmortem_markdown(incident_id: str, session: Session) -> str:
-    """
-    Generate a structured incident postmortem using real incident data + AI analysis.
-    Returns clean Markdown text generated by the LLM.
-    """
     import traceback
     from rag_engine import get_llm
 
@@ -867,7 +857,6 @@ async def _generate_postmortem_markdown(incident_id: str, session: Session) -> s
     if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
 
-    # ── Gather real data ──────────────────────────────────────────
     service = incident.service
     environment = incident.environment
     severity = "severe" if incident.expected_cause else "moderate"
@@ -884,7 +873,7 @@ async def _generate_postmortem_markdown(incident_id: str, session: Session) -> s
     ) or "  - No changes recorded"
 
     root_cause = incident.root_cause or incident.predicted_cause or "Not yet determined"
-    
+
     if incident.fixes_applied:
         fixes_strs = []
         for fix in incident.fixes_applied:
@@ -896,7 +885,6 @@ async def _generate_postmortem_markdown(incident_id: str, session: Session) -> s
     else:
         fixes = "None applied yet"
 
-    # ── Service dependency map for blast radius ───────────────────
     SERVICE_DEPS = {
         "user-gateway": ["checkout-ui", "payment-api", "inventory-service"],
         "checkout-ui": ["payment-api", "inventory-service"],
@@ -907,22 +895,20 @@ async def _generate_postmortem_markdown(incident_id: str, session: Session) -> s
     downstream = SERVICE_DEPS.get(service, [])
     blast_radius = ", ".join(f"`{s}`" for s in downstream) if downstream else "No known downstream dependencies."
 
-    # ── Build real timeline from incident data ────────────────────
     timeline_events = []
     if incident.start_time:
-        timeline_events.append(f"- **{incident.start_time.strftime('%H:%M:%S UTC')}** — Incident detected on `{service}` in `{environment}`")
+        timeline_events.append(f"- **{incident.start_time.strftime('%H:%M:%S UTC')}** - Incident detected on `{service}` in `{environment}`")
     if incident.symptoms:
-        timeline_events.append(f"- **{incident.start_time.strftime('%H:%M:%S UTC')} +30s** — Symptoms observed: {symptoms}")
+        timeline_events.append(f"- **{incident.start_time.strftime('%H:%M:%S UTC')} +30s** - Symptoms observed: {symptoms}")
     if incident.peak_time:
-        timeline_events.append(f"- **{incident.peak_time.strftime('%H:%M:%S UTC')}** — Peak impact reached")
+        timeline_events.append(f"- **{incident.peak_time.strftime('%H:%M:%S UTC')}** - Peak impact reached")
     if incident.resolved_time:
-        timeline_events.append(f"- **{incident.resolved_time.strftime('%H:%M:%S UTC')}** — Incident resolved")
+        timeline_events.append(f"- **{incident.resolved_time.strftime('%H:%M:%S UTC')}** - Incident resolved")
     else:
-        timeline_events.append("- **Ongoing** — Incident not yet resolved")
+        timeline_events.append("- **Ongoing** - Incident not yet resolved")
 
     timeline_str = "\n".join(timeline_events) if timeline_events else "No timeline events available."
 
-    # ── Run hybrid analysis to get fresh hypotheses ───────────────
     detection_source = "monitoring alerts"
     reasoning_summary = ""
     try:
@@ -930,7 +916,7 @@ async def _generate_postmortem_markdown(incident_id: str, session: Session) -> s
             run_hybrid_analysis, service, incident.symptoms, incident.signals, incident.changes, incident.user_id
         )
         hypotheses_text = "\n".join(
-            [f"  {i+1}. {h.title} (Confidence: {h.confidence}%) — {h.description}"
+            [f"  {i+1}. {h.title} (Confidence: {h.confidence}%) - {h.description}"
              for i, h in enumerate(result.hypotheses[:5])]
         ) or "  No hypotheses generated."
         suggested_fixes_short = "\n".join(
@@ -941,7 +927,6 @@ async def _generate_postmortem_markdown(incident_id: str, session: Session) -> s
         ) or "  - Conduct full architectural review."
         anomaly_summary = result.anomaly_report.get("summary", "No anomaly data.")
 
-        # Extract detection source from reasoning chain
         chain = result.reasoning_chain or []
         for step in chain:
             if "rule(s) matched" in step and "0 rule" not in step:
@@ -951,7 +936,6 @@ async def _generate_postmortem_markdown(incident_id: str, session: Session) -> s
                 detection_source = "statistical anomaly detection system (z-score deviation from baseline)"
                 break
 
-        # Build reasoning summary for the LLM
         reasoning_summary = "\n".join([f"  {s}" for s in chain]) if chain else "  No reasoning chain available."
 
     except Exception:
@@ -961,7 +945,6 @@ async def _generate_postmortem_markdown(incident_id: str, session: Session) -> s
         anomaly_summary = "Anomaly scoring unavailable."
         reasoning_summary = "  Analysis pipeline did not complete."
 
-    # ── Build the structured LLM prompt ───────────────────────────
     prompt = f"""You are a senior Site Reliability Engineer (SRE) writing a professional incident postmortem.
 
 Use ONLY the provided data. Do NOT invent or hallucinate events, metrics, or timestamps.
@@ -1028,7 +1011,7 @@ Write a structured postmortem with the following sections. Be concise, professio
 - 2-3 sentence description of what happened, when, and the business impact
 
 ## Impact
-- Derive MEASURABLE impact from the signals above (e.g., "memory usage reached 96%", "OOM kills caused pod restarts")
+- Derive MEASURABLE impact from the signals above
 - State which user-facing capabilities were degraded
 - Mention downstream services affected: {blast_radius}
 
@@ -1039,8 +1022,7 @@ Write a structured postmortem with the following sections. Be concise, professio
 - Clear technical explanation based on the AI analysis
 
 ## Causal Chain (Why Analysis)
-- Trace the chain: What changed → What mechanism broke → What failed → What users experienced
-- Example format: "Deployment of v2.1 introduced a new caching layer → Cache lacked eviction policy → Unbounded memory growth → OOM kills → Pod restarts → User-facing 5xx errors"
+- Trace the chain: What changed -> What mechanism broke -> What failed -> What users experienced
 - Use the actual changes and signals provided above
 
 ## Detection & Response
@@ -1058,20 +1040,18 @@ Write a structured postmortem with the following sections. Be concise, professio
 ---
 
 Constraints:
-- Be concise and professional — this will be read by engineering leadership
-- No hallucinated data — every metric and timestamp must come from the data above
+- Be concise and professional
+- No hallucinated data
 - Use bullet points for readability
-- The Causal Chain section is CRITICAL — show senior-level root cause reasoning
 - Output clean Markdown only
 """
 
-    # ── Call LLM ──────────────────────────────────────────────────
     llm = get_llm()
     if llm is None:
         raise HTTPException(status_code=503, detail="No LLM configured. Set GROQ_API_KEY or OPENAI_API_KEY.")
 
     response = await asyncio.to_thread(llm.complete, prompt)
-    logger.info(f"📝 Postmortem generated for incident {incident_id}")
+    logger.info(f"Postmortem generated for incident {incident_id}")
     return response.text
 
 
@@ -1140,9 +1120,7 @@ async def dispatch_postmortem(
     }
 
 
-
 async def verify_slack_signature(request: Request, body_bytes: bytes = b""):
-    """Verify Slack request signature. Accepts pre-read body to avoid double-read issues."""
     slack_secret = os.getenv("SLACK_SIGNING_SECRET")
     if not slack_secret:
         logger.warning("SLACK_SIGNING_SECRET not set - skipping signature verification")
@@ -1173,7 +1151,6 @@ async def verify_slack_signature(request: Request, body_bytes: bytes = b""):
 
 
 def process_slack_action(payload: dict):
-    """Process a Slack interactive action in a background thread."""
     from database import engine
 
     actions = payload.get("actions", [])
@@ -1240,7 +1217,6 @@ async def slack_interactive(
     request: Request,
     background_tasks: BackgroundTasks
 ):
-    """Handle Slack interactive button callbacks (Acknowledge, Runbook, Resolve)."""
     from urllib.parse import parse_qs
 
     try:
@@ -1273,13 +1249,9 @@ async def slack_interactive(
         return JSONResponse(status_code=200, content={"text": "Internal error"})
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# Local ChatOps Simulation — test Slack actions without ngrok
-# ═══════════════════════════════════════════════════════════════════════
-
 class SimulateSlackAction(BaseModel):
     incident_id: str
-    action: str  # "acknowledge", "execute_runbook", or "resolve"
+    action: str
     username: str = "local-engineer"
 
 
@@ -1289,7 +1261,6 @@ def simulate_slack_action(
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
-    """Simulate a Slack interactive action locally (no ngrok needed)."""
     incident = session.get(Incident, req.incident_id)
     if not incident or (incident.user_id and incident.user_id != current_user.id):
         raise HTTPException(status_code=404, detail="Incident not found")
@@ -1321,7 +1292,6 @@ def simulate_slack_action(
     session.commit()
     logger.info(f"Simulated Slack action: {req.action} on {req.incident_id} by {req.username}")
 
-    # Log the action to the activity log
     chatops_activity_log.append({
         "action": req.action,
         "incident_id": req.incident_id,
@@ -1332,10 +1302,6 @@ def simulate_slack_action(
 
     return {"status": "success", "action": req.action, "message": result}
 
-
-# ═══════════════════════════════════════════════════════════════════════
-# ChatOps Activity Logging
-# ═══════════════════════════════════════════════════════════════════════
 
 chatops_activity_log: List[Dict[str, Any]] = []
 
@@ -1354,8 +1320,6 @@ def get_chatops_logs(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
-    """Return ChatOps activity logs for the calling tenant's incidents only."""
-    # Build the set of incident IDs owned by this user.
     owned_ids = {
         i.id for i in session.exec(
             select(Incident).where(Incident.user_id == current_user.id)

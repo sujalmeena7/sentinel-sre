@@ -1,13 +1,15 @@
+
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
 import {
   Brain, Loader2, Sparkles, Search, ShieldCheck,
   Zap, BarChart3, Target, ChevronDown, ChevronUp,
   AlertTriangle, CheckCircle2, Activity,
-  ThumbsUp, ThumbsDown, FileText, Copy, Download, X, Pencil, Send, CheckCheck
+  ThumbsUp, ThumbsDown, FileText, Copy, Download, X, Pencil, Send, CheckCheck,
+  XCircle
 } from 'lucide-react';
 import { Incident, analyzeIncident, submitFeedback, generatePostmortem, dispatchPostmortem } from '@/lib/api';
 
@@ -84,9 +86,27 @@ const severityColors: Record<string, string> = {
 };
 
 export default function AIAnalysisPanel({ incident }: AIAnalysisPanelProps) {
-  const [analysis, setAnalysis] = useState<HybridResult | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // Analysis state is DRIVEN BY the incident record itself.
+  // Backend sets analysis_status + analysis_result asynchronously;
+  // the dashboard polls /incidents every 4s so this component reflects
+  // whatever the latest server state says.
+  const status = incident.analysis_status || 'idle';
+  const analysis = (incident.analysis_result as HybridResult | null) || null;
+  const serverError = incident.analysis_error || null;
+
+  const [kickoffLoading, setKickoffLoading] = useState(false);
+  const [kickoffError, setKickoffError] = useState<string | null>(null);
+  const [hasRun, setHasRun] = useState<boolean>(status === 'processing');
+
+  useEffect(() => {
+    if (status === 'processing') setHasRun(true);
+  }, [status]);
+
+  const isProcessing = status === 'processing' || kickoffLoading;
+  const isCompleted = status === 'completed' && !!analysis;
+  const isFailed = status === 'failed';
+  const error = kickoffError || (isFailed ? (serverError || 'Analysis failed') : null);
+
   const [showChain, setShowChain] = useState(false);
   const [feedbackStatus, setFeedbackStatus] = useState<'idle' | 'submitting' | 'submitted' | 'error'>('idle');
   const [postmortem, setPostmortem] = useState<string | null>(null);
@@ -168,19 +188,24 @@ export default function AIAnalysisPanel({ incident }: AIAnalysisPanelProps) {
   };
 
   const runAnalysis = async () => {
-    setLoading(true);
-    setError(null);
+    setKickoffLoading(true);
+    setKickoffError(null);
     try {
-      const result = await analyzeIncident(
+      const res = await analyzeIncident(
         incident.id,
         incident.symptoms,
         incident.signals as any
       );
-      setAnalysis(result as any as HybridResult);
+      // API returns instantly with { status: "processing" }. The dashboard's
+      // 4s poll will update incident.analysis_status and this component
+      // re-renders from props automatically.
+      if (res.status === 'processing') {
+        setHasRun(true);
+      }
     } catch (err: any) {
-      setError(err.message || 'Unknown network error occurred.');
+      setKickoffError(err.message || 'Failed to start analysis.');
     } finally {
-      setLoading(false);
+      setKickoffLoading(false);
     }
   };
 
@@ -205,11 +230,14 @@ export default function AIAnalysisPanel({ incident }: AIAnalysisPanelProps) {
           </div>
           <button
             onClick={runAnalysis}
-            disabled={loading}
+            disabled={isProcessing}
+            data-testid="run-analysis-btn"
             className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all duration-300 disabled:opacity-50 bg-gradient-to-r from-accent-cyan/20 to-accent-purple/20 hover:from-accent-cyan/30 hover:to-accent-purple/30 text-white border border-accent-cyan/20 hover:border-accent-cyan/40 hover:shadow-glow-cyan"
           >
-            {loading ? (
+            {isProcessing ? (
               <><Loader2 size={14} className="animate-spin" /> Analyzing...</>
+            ) : isCompleted ? (
+              <><Sparkles size={14} /> Re-run Analysis</>
             ) : (
               <><Sparkles size={14} /> Run Analysis</>
             )}
@@ -218,7 +246,7 @@ export default function AIAnalysisPanel({ incident }: AIAnalysisPanelProps) {
       </div>
 
       <AnimatePresence mode="wait">
-        {!analysis && !loading && !error && (
+        {!isCompleted && !isProcessing && !error && (
           <motion.div key="empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             className="glass rounded-xl flex flex-col items-center justify-center py-14 text-center">
             <div className="w-16 h-16 rounded-2xl bg-surface-200/50 flex items-center justify-center mb-4">
@@ -230,16 +258,17 @@ export default function AIAnalysisPanel({ incident }: AIAnalysisPanelProps) {
           </motion.div>
         )}
 
-        {loading && (
+        {isProcessing && (
           <motion.div key="loading" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="glass rounded-xl flex flex-col items-center justify-center py-14">
+            className="glass rounded-xl flex flex-col items-center justify-center py-14" data-testid="analysis-processing">
             <div className="relative">
               <div className="w-16 h-16 rounded-full border-2 border-accent-cyan/20 flex items-center justify-center">
                 <Loader2 size={28} className="text-accent-cyan animate-spin" />
               </div>
               <div className="absolute inset-0 rounded-full border-2 border-accent-purple/10 animate-ping" />
             </div>
-            <p className="text-sm text-slate-400 mt-4">Running hybrid pipeline...</p>
+            <p className="text-sm text-slate-400 mt-4">Running hybrid pipeline in background...</p>
+            <p className="text-xs text-slate-500 mt-1">This usually takes 5–20 seconds. Results will appear automatically.</p>
             <div className="flex gap-3 mt-3 text-xs text-slate-600">
               <span className="flex items-center gap-1"><Zap size={10} />Rules</span>
               <span>→</span>
@@ -252,14 +281,19 @@ export default function AIAnalysisPanel({ incident }: AIAnalysisPanelProps) {
           </motion.div>
         )}
 
-        {error && (
+        {error && !isProcessing && (
           <motion.div key="error" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="glass rounded-xl p-4 text-sm text-accent-rose border border-accent-rose/20">
-            {error}
+            data-testid="analysis-error"
+            className="glass rounded-xl p-4 text-sm text-accent-rose border border-accent-rose/20 flex items-start gap-3">
+            <XCircle size={16} className="mt-0.5 flex-shrink-0" />
+            <div>
+              <div className="font-semibold mb-1">Analysis failed</div>
+              <div className="text-xs text-rose-300/80 font-mono break-words">{error}</div>
+            </div>
           </motion.div>
         )}
 
-        {analysis && (
+        {isCompleted && analysis && (
           <motion.div key="result" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
             className="space-y-4">
 
@@ -309,7 +343,7 @@ export default function AIAnalysisPanel({ incident }: AIAnalysisPanelProps) {
               </div>
             </div>
 
-            {/* Analysis Breakdown (Why this result?) */}
+            {/* Analysis Breakdown */}
             {analysis.analysis_breakdown && (
               <div className="glass rounded-xl p-5 border border-accent-purple/20">
                 <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-2">
@@ -340,11 +374,10 @@ export default function AIAnalysisPanel({ incident }: AIAnalysisPanelProps) {
 
                   return (
                     <motion.div key={i} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.15 }}
-                      className={`rounded-xl p-4 border transition-all ${
-                        i === 0
-                          ? 'bg-accent-cyan/[0.04] border-accent-cyan/20 shadow-glow-cyan'
-                          : 'bg-surface-100/40 border-white/[0.04]'
-                      }`}>
+                      className={`rounded-xl p-4 border transition-all ${i === 0
+                        ? 'bg-accent-cyan/[0.04] border-accent-cyan/20 shadow-glow-cyan'
+                        : 'bg-surface-100/40 border-white/[0.04]'
+                        }`}>
                       <div className="flex items-start justify-between mb-2">
                         <div className="flex items-center gap-2">
                           <span className="text-lg font-bold text-slate-500">#{hyp.rank}</span>
@@ -353,10 +386,9 @@ export default function AIAnalysisPanel({ incident }: AIAnalysisPanelProps) {
                         </div>
                         <div className="flex items-center gap-1.5">
                           <div className="w-16 h-1.5 rounded-full bg-surface-200 overflow-hidden">
-                            <div className={`h-full rounded-full transition-all ${
-                              hyp.confidence >= 80 ? 'bg-accent-emerald' :
+                            <div className={`h-full rounded-full transition-all ${hyp.confidence >= 80 ? 'bg-accent-emerald' :
                               hyp.confidence >= 50 ? 'bg-accent-amber' : 'bg-accent-rose'
-                            }`} style={{ width: `${hyp.confidence}%` }} />
+                              }`} style={{ width: `${hyp.confidence}%` }} />
                           </div>
                           <span className="text-xs font-bold text-slate-300">{hyp.confidence}%</span>
                         </div>
@@ -412,7 +444,7 @@ export default function AIAnalysisPanel({ incident }: AIAnalysisPanelProps) {
               </div>
             </div>
 
-            {/* ═══ Why Not X? — Rejected Hypotheses ═══ */}
+            {/* Rejected Hypotheses */}
             {analysis.rejected_hypotheses && analysis.rejected_hypotheses.length > 0 && (
               <div className="space-y-3">
                 <button
@@ -469,9 +501,8 @@ export default function AIAnalysisPanel({ incident }: AIAnalysisPanelProps) {
                             </div>
                             <div className="text-right flex-shrink-0">
                               <div className="text-[10px] text-slate-500">Match</div>
-                              <div className={`text-sm font-bold ${
-                                rej.score >= 0.2 ? 'text-amber-400' : 'text-slate-600'
-                              }`}>
+                              <div className={`text-sm font-bold ${rej.score >= 0.2 ? 'text-amber-400' : 'text-slate-600'
+                                }`}>
                                 {Math.round(rej.score * 100)}%
                               </div>
                             </div>
@@ -490,17 +521,17 @@ export default function AIAnalysisPanel({ incident }: AIAnalysisPanelProps) {
                 <h4 className="text-sm font-semibold text-slate-200 mb-1">Was this analysis helpful?</h4>
                 <p className="text-xs text-slate-400">Help the system learn from your response to improve future hypotheses.</p>
               </div>
-              
+
               <div className="flex gap-2">
                 {feedbackStatus === 'idle' || feedbackStatus === 'error' ? (
                   <>
-                    <button 
+                    <button
                       onClick={() => handleFeedback(1)}
                       className="px-4 py-2 bg-surface-100 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 rounded-lg transition-all text-sm flex items-center gap-2"
                     >
                       <ThumbsUp size={14} /> Helpful
                     </button>
-                    <button 
+                    <button
                       onClick={() => handleFeedback(-1)}
                       className="px-4 py-2 bg-surface-100 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 rounded-lg transition-all text-sm flex items-center gap-2"
                     >
@@ -553,7 +584,7 @@ export default function AIAnalysisPanel({ incident }: AIAnalysisPanelProps) {
         )}
       </AnimatePresence>
 
-      {/* ═══ Postmortem Modal ═══ */}
+      {/* Postmortem Modal */}
       <AnimatePresence>
         {showPmModal && postmortem && (
           <motion.div
@@ -572,7 +603,6 @@ export default function AIAnalysisPanel({ incident }: AIAnalysisPanelProps) {
               className="bg-surface-200 border border-white/10 rounded-2xl w-full max-w-4xl max-h-[85vh] flex flex-col shadow-2xl"
               onClick={(e) => e.stopPropagation()}
             >
-              {/* Modal Header */}
               <div className="flex items-center justify-between p-5 border-b border-white/5">
                 <div className="flex items-center gap-3">
                   <div className="p-2 bg-cyan-500/10 rounded-lg">
@@ -586,11 +616,10 @@ export default function AIAnalysisPanel({ incident }: AIAnalysisPanelProps) {
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => { setPmEditing(!pmEditing); }}
-                    className={`p-2 rounded-lg text-sm transition-all ${
-                      pmEditing
-                        ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
-                        : 'bg-surface-100 text-slate-400 hover:text-slate-200 border border-white/5'
-                    }`}
+                    className={`p-2 rounded-lg text-sm transition-all ${pmEditing
+                      ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                      : 'bg-surface-100 text-slate-400 hover:text-slate-200 border border-white/5'
+                      }`}
                     title={pmEditing ? 'Preview' : 'Edit'}
                   >
                     <Pencil size={14} />
@@ -625,7 +654,6 @@ export default function AIAnalysisPanel({ incident }: AIAnalysisPanelProps) {
                 </div>
               </div>
 
-              {/* Modal Body */}
               <div className="flex-1 overflow-y-auto p-6">
                 {pmEditing ? (
                   <textarea
@@ -640,7 +668,6 @@ export default function AIAnalysisPanel({ incident }: AIAnalysisPanelProps) {
                 )}
               </div>
 
-              {/* Modal Footer */}
               <div className="flex items-center justify-between p-4 border-t border-white/5">
                 <p className="text-xs text-slate-500">Generated by AI Root Cause Analyzer • {new Date().toLocaleDateString()}</p>
                 <div className="flex gap-2">
@@ -669,7 +696,7 @@ export default function AIAnalysisPanel({ incident }: AIAnalysisPanelProps) {
         )}
       </AnimatePresence>
 
-      {/* ═══ Dispatch Modal ═══ */}
+      {/* Dispatch Modal */}
       <AnimatePresence>
         {showDispatchModal && (
           <motion.div
@@ -701,21 +728,19 @@ export default function AIAnalysisPanel({ incident }: AIAnalysisPanelProps) {
               <div className="grid grid-cols-2 gap-2 mb-4">
                 <button
                   onClick={() => setDispatchDestination('slack')}
-                  className={`px-3 py-2 rounded-lg border text-sm transition-all ${
-                    dispatchDestination === 'slack'
-                      ? 'bg-[#4A154B]/25 border-[#4A154B]/60 text-[#E5D3F2]'
-                      : 'bg-surface-100 border-white/10 text-slate-300 hover:border-white/20'
-                  }`}
+                  className={`px-3 py-2 rounded-lg border text-sm transition-all ${dispatchDestination === 'slack'
+                    ? 'bg-[#4A154B]/25 border-[#4A154B]/60 text-[#E5D3F2]'
+                    : 'bg-surface-100 border-white/10 text-slate-300 hover:border-white/20'
+                    }`}
                 >
                   <span className="inline-flex w-4 h-4 mr-2 rounded bg-[#4A154B]/90 align-middle" /> Slack
                 </button>
                 <button
                   onClick={() => setDispatchDestination('teams')}
-                  className={`px-3 py-2 rounded-lg border text-sm transition-all ${
-                    dispatchDestination === 'teams'
-                      ? 'bg-[#464EB8]/25 border-[#464EB8]/60 text-[#DDE1FF]'
-                      : 'bg-surface-100 border-white/10 text-slate-300 hover:border-white/20'
-                  }`}
+                  className={`px-3 py-2 rounded-lg border text-sm transition-all ${dispatchDestination === 'teams'
+                    ? 'bg-[#464EB8]/25 border-[#464EB8]/60 text-[#DDE1FF]'
+                    : 'bg-surface-100 border-white/10 text-slate-300 hover:border-white/20'
+                    }`}
                 >
                   <span className="inline-flex w-4 h-4 mr-2 rounded bg-[#464EB8]/90 align-middle" /> Teams
                 </button>
@@ -745,7 +770,7 @@ export default function AIAnalysisPanel({ incident }: AIAnalysisPanelProps) {
         )}
       </AnimatePresence>
 
-      {/* ═══ Dispatch Success Toast ═══ */}
+      {/* Dispatch Success Toast */}
       <AnimatePresence>
         {showDispatchSuccess && (
           <motion.div

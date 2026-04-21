@@ -31,9 +31,6 @@ export function warmBackend(): void {
 // ─────────────────────────────────────────────────────────────
 // Authenticated fetch wrapper
 // ─────────────────────────────────────────────────────────────
-// Automatically injects the Bearer JWT from localStorage on every call,
-// and on a 401 clears the session + redirects to /login so the user
-// never sees a stale "something went wrong" state from an expired token.
 async function authFetch(input: string, init: RequestInit = {}): Promise<Response> {
   const token = readAuthToken();
   const headers = new Headers(init.headers || {});
@@ -42,8 +39,6 @@ async function authFetch(input: string, init: RequestInit = {}): Promise<Respons
   }
   const res = await fetch(input, { ...init, headers });
   if (res.status === 401) {
-    // Don't force-logout on the auth routes themselves (login/register
-    // expect 401 on wrong password and should render their own error).
     const isAuthRoute = input.includes('/auth/login') || input.includes('/auth/register');
     if (!isAuthRoute) forceLogoutOn401();
   }
@@ -69,21 +64,33 @@ export interface Incident {
     status: string;
   }[];
   acknowledged_by?: string | null;
-  predicted_cause?: string | null; 
+  predicted_cause?: string | null;
   expected_cause?: string | null;
   is_correct?: boolean | null;
   human_feedback_score?: number | null;
   human_feedback_count?: number | null;
   human_feedback_comment?: string | null;
   runbook_refs: string[];
+  // Async analysis tracking (populated by the non-blocking /analyze pipeline)
+  analysis_status?: 'idle' | 'processing' | 'completed' | 'failed' | null;
+  analysis_result?: AnalysisResult | null;
+  analysis_error?: string | null;
 }
 
 export interface AnalysisResult {
-  similar_historic_incidents: string[];
-  investigation_report: string;
   hypotheses: any[];
+  anomaly_report: any;
+  similar_historic_incidents: string[];
+  llm_narrative: string;
   reasoning_chain: string[];
   analysis_breakdown?: { [key: string]: string };
+  rejected_hypotheses?: any[];
+}
+
+export interface AnalyzeKickoffResponse {
+  status: 'processing';
+  message: string;
+  incident_id: string;
 }
 
 export async function fetchIncidents(): Promise<Incident[]> {
@@ -92,11 +99,17 @@ export async function fetchIncidents(): Promise<Incident[]> {
   return res.json();
 }
 
+export async function fetchIncident(incident_id: string): Promise<Incident> {
+  const res = await authFetch(`${API_BASE}/incidents/${incident_id}`, { cache: 'no-store' });
+  if (!res.ok) throw new Error('Failed to fetch incident');
+  return res.json();
+}
+
 export async function analyzeIncident(
   incident_id: string,
   symptoms: string[],
   signals: { [key: string]: string }[]
-): Promise<AnalysisResult> {
+): Promise<AnalyzeKickoffResponse> {
   let res: Response;
   try {
     res = await authFetch(`${API_BASE}/incidents/analyze`, {
@@ -113,16 +126,11 @@ export async function analyzeIncident(
   }
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    // Edge-proxy timeouts return 502 with empty body + empty statusText.
-    if (res.status === 502 && !text) {
-      throw new Error(
-        `Analysis failed: the request took too long and the upstream proxy timed out (502). ` +
-        `This usually means the backend is still processing the LLM call or cold-starting. ` +
-        `Please retry in a few seconds.`
-      );
-    }
-    throw new Error(`Analysis failed: ${res.status} ${res.statusText} - ${text}`);
+    throw new Error(`Failed to start analysis: ${res.status} ${res.statusText} - ${text}`);
   }
+  // Non-blocking API: returns immediately with { status: "processing", ... }.
+  // The caller should poll the incident record (or rely on the dashboard's
+  // 4s list poll) to read `analysis_status` / `analysis_result`.
   return res.json();
 }
 
@@ -261,14 +269,6 @@ async function callChatOpsEndpoint(
   return res.json();
 }
 
-/**
- * Unified ChatOps action handler.
- *
- * - Simulation mode: direct call, no retries
- * - Real Slack mode: retries with exponential backoff
- *
- * Logs mode + action to console for debugging.
- */
 export async function handleChatOpsAction(
   action: ChatOpsActionType,
   incidentId: string,
@@ -286,7 +286,6 @@ export async function handleChatOpsAction(
     return callChatOpsEndpoint(incidentId, action, username);
   }
 
-  // Real Slack mode — retry with exponential backoff
   return withRetry(
     () => callChatOpsEndpoint(incidentId, action, username),
     maxRetries,
@@ -307,4 +306,3 @@ export async function fetchChatOpsLogs(incident_id?: string): Promise<ChatOpsLog
   if (!res.ok) return [];
   return res.json();
 }
-
