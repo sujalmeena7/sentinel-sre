@@ -8,6 +8,7 @@ import { Shield, Zap, Radio, ChevronRight, X, Menu } from 'lucide-react'
 const VideoPlayer = memo(function VideoPlayer() {
   const videoRef = useRef<HTMLVideoElement>(null)
   const hlsRef = useRef<any>(null)
+  const [error, setError] = useState(false)
 
   useEffect(() => {
     let hls: any
@@ -16,8 +17,12 @@ const VideoPlayer = memo(function VideoPlayer() {
 
     const src = 'https://stream.mux.com/9JXDljEVWYwWu01PUkAemafDugK89o01BR6zqJ3aS9u00A.m3u8'
 
+    const onError = () => setError(true)
+    video.addEventListener('error', onError)
+
     if (video.canPlayType('application/vnd.apple.mpegurl')) {
       video.src = src
+      video.play().catch(() => {})
     } else if (typeof window !== 'undefined') {
       import('hls.js').then((HlsMod) => {
         const Hls = HlsMod.default
@@ -25,18 +30,29 @@ const VideoPlayer = memo(function VideoPlayer() {
           hls = new Hls({
             maxBufferLength: 30,
             maxMaxBufferLength: 60,
+            debug: false,
           })
           hls.loadSource(src)
           hls.attachMedia(video)
           hls.on(Hls.Events.MANIFEST_PARSED, () => {
             video.play().catch(() => {})
           })
+          hls.on(Hls.Events.ERROR, (_: any, data: any) => {
+            if (data.fatal) {
+              console.error('HLS fatal error:', data.type, data.details)
+              setError(true)
+              hls.destroy()
+            }
+          })
           hlsRef.current = hls
+        } else {
+          setError(true)
         }
-      })
+      }).catch(() => setError(true))
     }
 
     return () => {
+      video.removeEventListener('error', onError)
       if (hlsRef.current) {
         hlsRef.current.destroy()
       }
@@ -44,15 +60,20 @@ const VideoPlayer = memo(function VideoPlayer() {
   }, [])
 
   return (
-    <video
-      ref={videoRef}
-      autoPlay
-      muted
-      loop
-      playsInline
-      className="absolute inset-0 w-full h-full object-cover"
-      style={{ opacity: 1 }}
-    />
+    <>
+      <video
+        ref={videoRef}
+        autoPlay
+        muted
+        loop
+        playsInline
+        className="absolute inset-0 w-full h-full object-cover"
+        style={{ opacity: 1 }}
+      />
+      {error && (
+        <div className="absolute inset-0 bg-gradient-to-br from-orange-950/40 via-black to-orange-900/20" />
+      )}
+    </>
   )
 })
 
@@ -227,24 +248,24 @@ export default function HeroSection() {
 
   return (
     <section className="relative min-h-screen bg-black overflow-hidden">
-      {/* HLS Video Background */}
-      <div
-        className="absolute bottom-[35vh] left-0 right-0 h-[80vh] z-0"
-        style={{ transform: 'translateY(20%)' }}
-      >
+      {/* HLS Video Background — full section */}
+      <div className="absolute inset-0 z-0">
         <VideoPlayer />
       </div>
 
-      {/* Subtle radial glow behind text for readability */}
-      <div className="absolute inset-0 z-[1] bg-gradient-to-b from-black via-black/80 to-transparent pointer-events-none" />
+      {/* Bottom fade so content below scrolls cleanly */}
+      <div className="absolute bottom-0 left-0 right-0 h-32 z-[2] bg-gradient-to-t from-black to-transparent pointer-events-none" />
 
       {/* Navbar */}
       <Navbar />
 
       {/* Hero Content */}
-      <div className="relative z-10 flex flex-col items-center justify-center min-h-screen px-4 pt-24 pb-32">
+      <div className="relative z-10 flex flex-col items-center justify-center min-h-screen px-4 pt-32 pb-24">
+        {/* Local dark backdrop behind text for readability, not full viewport */}
+        <div className="absolute inset-x-0 top-1/4 bottom-1/4 bg-gradient-to-b from-black/60 via-black/40 to-transparent pointer-events-none" />
+
         <motion.div
-          className="text-center max-w-4xl mx-auto"
+          className="relative text-center max-w-4xl mx-auto"
           variants={containerVariants}
           initial="hidden"
           animate="visible"
@@ -254,15 +275,15 @@ export default function HeroSection() {
             variants={itemVariants}
             className="flex flex-wrap items-center justify-center gap-3 mb-8"
           >
-            <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-white/[0.08] bg-white/[0.03] backdrop-blur-sm text-[11px] text-white/60">
+            <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-white/[0.08] bg-black/30 backdrop-blur-sm text-[11px] text-white/60">
               <Zap className="w-3 h-3 text-orange-400" />
               Integrated with Prometheus
             </span>
-            <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-white/[0.08] bg-white/[0.03] backdrop-blur-sm text-[11px] text-white/60">
+            <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-white/[0.08] bg-black/30 backdrop-blur-sm text-[11px] text-white/60">
               <Radio className="w-3 h-3 text-emerald-400" />
               Real-time Telemetry
             </span>
-            <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-white/[0.08] bg-white/[0.03] backdrop-blur-sm text-[11px] text-white/60">
+            <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-white/[0.08] bg-black/30 backdrop-blur-sm text-[11px] text-white/60">
               <Shield className="w-3 h-3 text-cyan-400" />
               AI-Powered RCA
             </span>
@@ -271,7 +292,7 @@ export default function HeroSection() {
           {/* Headline */}
           <motion.h1
             variants={itemVariants}
-            className="text-5xl sm:text-6xl lg:text-[80px] font-semibold tracking-tight leading-[1.05] text-white mb-6"
+            className="text-5xl sm:text-6xl lg:text-[80px] font-semibold tracking-tight leading-[1.05] text-white mb-6 drop-shadow-[0_4px_30px_rgba(0,0,0,0.6)]"
           >
             Where Innovation
             <br />
@@ -281,7 +302,7 @@ export default function HeroSection() {
           {/* Subtext */}
           <motion.p
             variants={itemVariants}
-            className="text-base sm:text-lg text-white/50 max-w-xl mx-auto leading-relaxed mb-10"
+            className="text-base sm:text-lg text-white/70 max-w-xl mx-auto leading-relaxed mb-10 drop-shadow-[0_2px_20px_rgba(0,0,0,0.5)]"
           >
             Test chaos scenarios in simulated environments and deploy
             <br className="hidden sm:block" />
@@ -295,14 +316,14 @@ export default function HeroSection() {
           >
             <a
               href="/register"
-              className="inline-flex items-center gap-2 px-6 py-3 rounded-full bg-black border border-white/20 text-white text-sm font-medium hover:bg-white/5 hover:border-white/30 transition-all"
+              className="inline-flex items-center gap-2 px-6 py-3 rounded-full bg-black/80 border border-white/20 text-white text-sm font-medium hover:bg-black/60 hover:border-white/30 transition-all backdrop-blur-sm"
             >
               Get Started for Free
               <ChevronRight className="w-4 h-4" />
             </a>
             <a
               href="/dashboard"
-              className="inline-flex items-center gap-2 px-6 py-3 rounded-full border border-white/[0.08] bg-white/[0.03] backdrop-blur-sm text-white/70 text-sm font-medium hover:bg-white/[0.06] hover:text-white transition-all"
+              className="inline-flex items-center gap-2 px-6 py-3 rounded-full border border-white/[0.08] bg-white/[0.05] backdrop-blur-sm text-white/80 text-sm font-medium hover:bg-white/[0.08] hover:text-white transition-all"
             >
               Let's Get Connected
             </a>
