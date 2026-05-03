@@ -1,12 +1,14 @@
 import React, { useState } from 'react';
-import {   m as motion   } from 'framer-motion';
-import { Radio, Copy, Check, ExternalLink } from 'lucide-react';
+import { Radio, Copy, Check, ExternalLink, RefreshCw } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 export default function TelemetryPanel() {
   const [copied, setCopied] = useState(false);
-  const token = process.env.NEXT_PUBLIC_TELEMETRY_TOKEN || "YOUR_WEBHOOK_TOKEN";
+  const [rotating, setRotating] = useState(false);
+  const { webhookToken, rotateWebhookToken } = useAuth();
+  const token = webhookToken || "YOUR_WEBHOOK_TOKEN";
   const webhookUrl = `${API_URL}/api/v1/telemetry/prometheus/${token}`;
 
   const curlCommand = `curl -X POST ${webhookUrl} \\
@@ -37,6 +39,17 @@ export default function TelemetryPanel() {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const handleRotate = async () => {
+    setRotating(true);
+    try {
+      await rotateWebhookToken();
+    } catch (e) {
+      // error shown by caller
+    } finally {
+      setRotating(false);
+    }
+  };
+
   return (
     <div className="bg-surface-100 border border-accent-emerald/20 rounded-2xl p-6 relative overflow-hidden group hover:border-accent-emerald/40 transition-colors h-full flex flex-col">
       <div className="absolute top-0 right-0 w-64 h-64 bg-accent-emerald/5 rounded-full blur-3xl -mr-20 -mt-20 pointer-events-none" />
@@ -56,10 +69,25 @@ export default function TelemetryPanel() {
 
       <div className="flex-1 space-y-4">
         <div>
-          <label className="block text-xs font-medium text-slate-400 mb-1">Webhook URL</label>
-          <div className="bg-surface-200 border border-white/5 rounded-lg px-3 py-2 text-sm font-mono text-slate-300 overflow-x-auto whitespace-nowrap">
+          <div className="flex items-center justify-between mb-1">
+            <label className="block text-xs font-medium text-slate-400">Webhook URL</label>
+            <button
+              onClick={handleRotate}
+              disabled={rotating}
+              className="flex items-center gap-1 text-[10px] text-accent-emerald hover:text-accent-emerald/80 transition-colors"
+            >
+              <RefreshCw size={10} className={rotating ? 'animate-spin' : ''} />
+              {rotating ? 'Rotating…' : 'Regenerate token'}
+            </button>
+          </div>
+          <div className="bg-surface-200 border border-white/5 rounded-lg px-3 py-2 text-[11px] font-mono text-slate-300 overflow-x-auto whitespace-nowrap">
             {webhookUrl}
           </div>
+          {!webhookToken && (
+            <p className="text-[10px] text-accent-amber mt-1">
+              Token not found — register or regenerate to get a valid webhook URL.
+            </p>
+          )}
         </div>
         
         <div>

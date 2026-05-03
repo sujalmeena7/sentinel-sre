@@ -19,8 +19,8 @@ interface AuthState {
   // `null`      = definitively unauthenticated.
   user: AuthUser | null | undefined;
   token: string | null;
-  // Raw webhook token — ONLY populated transiently right after register
-  // or rotate (backend returns it exactly once). Displayed then cleared.
+  // Raw webhook token — persisted in localStorage so the TelemetryPanel
+  // can always show the correct URL. Displayed once after register/rotate.
   webhookToken: string | null;
 
   login: (email: string, password: string) => Promise<void>;
@@ -32,6 +32,7 @@ interface AuthState {
 
 const STORAGE_TOKEN_KEY = 'sentinel_jwt';
 const STORAGE_USER_KEY = 'sentinel_user';
+const STORAGE_WEBHOOK_KEY = 'sentinel_webhook_token';
 
 // ─────────────────────────────────────────────────────────────
 // Context
@@ -66,9 +67,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const storedToken = localStorage.getItem(STORAGE_TOKEN_KEY);
       const storedUser = localStorage.getItem(STORAGE_USER_KEY);
+      const storedWebhook = localStorage.getItem(STORAGE_WEBHOOK_KEY);
       if (storedToken && storedUser) {
         setToken(storedToken);
         setUser(JSON.parse(storedUser) as AuthUser);
+        if (storedWebhook) setWebhookToken(storedWebhook);
       } else {
         setUser(null);
       }
@@ -93,6 +96,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       localStorage.removeItem(STORAGE_TOKEN_KEY);
       localStorage.removeItem(STORAGE_USER_KEY);
+      localStorage.removeItem(STORAGE_WEBHOOK_KEY);
     } catch { /* no-op */ }
     router.push('/login');
   }, [router]);
@@ -117,7 +121,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(formatApiError(data?.detail, 'Registration failed'));
     persistSession(data.access_token, data.user);
-    if (data.webhook_token) setWebhookToken(data.webhook_token);
+    if (data.webhook_token) {
+      setWebhookToken(data.webhook_token);
+      try { localStorage.setItem(STORAGE_WEBHOOK_KEY, data.webhook_token); } catch {}
+    }
   }, [persistSession]);
 
   const rotateWebhookToken = useCallback(async (): Promise<string> => {
@@ -129,7 +136,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!res.ok) throw new Error(formatApiError(data?.detail, 'Could not rotate token'));
     // Refresh the stored JWT (backend issues a new one defensively)
     if (data.access_token && data.user) persistSession(data.access_token, data.user);
-    if (data.webhook_token) setWebhookToken(data.webhook_token);
+    if (data.webhook_token) {
+      setWebhookToken(data.webhook_token);
+      try { localStorage.setItem(STORAGE_WEBHOOK_KEY, data.webhook_token); } catch {}
+    }
     return data.webhook_token;
   }, [persistSession, token]);
 
