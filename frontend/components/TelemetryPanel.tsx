@@ -6,11 +6,10 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 export default function TelemetryPanel() {
   const [copied, setCopied] = useState(false);
-  const webhookUrl = `${API_URL}/api/v1/telemetry/prometheus`;
-  const token = process.env.NEXT_PUBLIC_TELEMETRY_TOKEN || "change-me-in-production";
+  const token = process.env.NEXT_PUBLIC_TELEMETRY_TOKEN || "YOUR_WEBHOOK_TOKEN";
+  const webhookUrl = `${API_URL}/api/v1/telemetry/prometheus/${token}`;
 
   const curlCommand = `curl -X POST ${webhookUrl} \\
-  -H "Authorization: Bearer ${token}" \\
   -H "Content-Type: application/json" \\
   -d '{
     "receiver": "webhook",
@@ -43,7 +42,7 @@ export default function TelemetryPanel() {
       <div className="absolute top-0 right-0 w-64 h-64 bg-accent-emerald/5 rounded-full blur-3xl -mr-20 -mt-20 pointer-events-none" />
       
       <div className="flex items-center gap-3 mb-6">
-        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-accent-emerald/20 to-accent-cyan/20 flex items-center justify-center border border-accent-emerald/20">
+        <div className="w-10 h-10 rounded-xl bg-white/[0.04] flex items-center justify-center border border-accent-emerald/20">
           <Radio size={20} className="text-accent-emerald" />
         </div>
         <div>
@@ -74,7 +73,7 @@ export default function TelemetryPanel() {
                {copied ? 'Copied!' : 'Copy'}
              </button>
           </div>
-          <div className="bg-surface-900 border border-white/5 rounded-lg p-3 text-[11px] font-mono text-slate-300 relative overflow-x-auto">
+          <div className="bg-surface border border-white/5 rounded-lg p-3 text-[11px] font-mono text-slate-300 relative overflow-x-auto">
             <pre className="whitespace-pre-wrap">{curlCommand}</pre>
           </div>
         </div>
