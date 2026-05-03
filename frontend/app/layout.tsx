@@ -1,10 +1,10 @@
 import type { Metadata } from 'next'
-import { Inter, JetBrains_Mono } from 'next/font/google'
+import { Plus_Jakarta_Sans, JetBrains_Mono } from 'next/font/google'
 import './globals.css'
 import { AuthProvider } from '@/contexts/AuthContext'
 import { MotionProvider } from '@/components/MotionProvider'
 
-const inter = Inter({ 
+const plusJakarta = Plus_Jakarta_Sans({ 
   subsets: ['latin'], 
   display: 'swap',
   variable: '--font-inter',
@@ -25,8 +25,8 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`dark ${inter.variable} ${jetbrainsMono.variable}`}>
-      <body className="bg-black text-white antialiased min-h-screen font-sans">
+    <html lang="en" className={`dark ${plusJakarta.variable} ${jetbrainsMono.variable}`}>
+      <body className="bg-cinematic text-white antialiased min-h-screen font-sans">
         <MotionProvider>
           <AuthProvider>{children}</AuthProvider>
         </MotionProvider>

@@ -8,7 +8,7 @@ const config: Config = {
   theme: {
     extend: {
       fontFamily: {
-        sans: ['var(--font-inter)', 'Inter', 'system-ui', 'sans-serif'],
+        sans: ['var(--font-inter)', 'Plus Jakarta Sans', 'system-ui', 'sans-serif'],
         mono: ['var(--font-mono)', 'JetBrains Mono', 'Fira Code', 'monospace'],
       },
       colors: {
@@ -20,6 +20,7 @@ const config: Config = {
           300: '#1c254a',
         },
         accent: {
+          DEFAULT: '#f97316',
           cyan: '#00e5ff',
           blue: '#3b82f6',
           purple: '#a855f7',
@@ -29,11 +30,7 @@ const config: Config = {
         },
       },
       boxShadow: {
-        'glow-cyan': '0 0 20px rgba(0, 229, 255, 0.15)',
-        'glow-blue': '0 0 20px rgba(59, 130, 246, 0.15)',
-        'glow-emerald': '0 0 20px rgba(16, 185, 129, 0.15)',
-        'glow-amber': '0 0 20px rgba(245, 158, 11, 0.15)',
-        'glow-rose': '0 0 20px rgba(244, 63, 94, 0.15)',
+        'glow-accent': '0 0 20px rgba(249, 115, 22, 0.15)',
       },
       animation: {
         'pulse-slow': 'pulse-slow 4s ease-in-out infinite',

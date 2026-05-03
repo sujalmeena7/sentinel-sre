@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import {   m as motion , useScroll, useTransform, AnimatePresence, useInView  } from 'framer-motion'
+import {   m as motion , AnimatePresence, useInView  } from 'framer-motion'
 import {
   Brain,
   Zap,
@@ -14,7 +14,6 @@ import {
   Activity,
   AlertTriangle,
   CheckCircle2,
-  TrendingUp,
   Shield,
   Code2,
   Terminal,
@@ -22,25 +21,18 @@ import {
   Cpu,
   GitBranch,
   Radio,
-  ChevronRight,
   Star,
   Gauge,
   Layers,
   Database,
-  Bell,
   Menu,
   X,
   Loader2,
-  Zap as Bolt,
-  Crown,
-  Rocket,
   Flame,
   Network,
   MemoryStick,
-  Timer,
   ServerCrash,
   Plug,
-  Puzzle,
 } from 'lucide-react'
 
 /* =========================================================
@@ -70,30 +62,30 @@ const FadeIn = ({ children, delay = 0, y = 20, className = '' }: FadeInProps) =>
   )
 }
 
-interface GradientBadgeProps {
+interface BadgeProps {
   children: React.ReactNode;
   icon?: any;
 }
 
-const GradientBadge = ({ children, icon: Icon }: GradientBadgeProps) => (
+const Badge = ({ children, icon: Icon }: BadgeProps) => (
   <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full glass text-xs font-medium text-white/80">
-    {Icon && <Icon className="w-3.5 h-3.5 text-indigo-400" />}
+    {Icon && <Icon className="w-3.5 h-3.5 text-orange-400" />}
     <span>{children}</span>
   </div>
 )
 
-interface GlowButtonProps {
+interface ButtonProps {
   children: React.ReactNode;
   variant?: 'primary' | 'secondary';
   href?: string;
   icon?: any;
 }
 
-const GlowButton = ({ children, variant = 'primary', href = '#', icon: Icon }: GlowButtonProps) => {
-  const base = 'relative inline-flex items-center justify-center gap-2 px-6 py-3 rounded-full font-medium text-sm transition-all duration-300 shine group'
+const Button = ({ children, variant = 'primary', href = '#', icon: Icon }: ButtonProps) => {
+  const base = 'relative inline-flex items-center justify-center gap-2 px-6 py-3 rounded-full font-medium text-sm transition-all duration-300 group'
   if (variant === 'primary') {
     return (
-      <a href={href} className={`${base} bg-white text-black hover:bg-white/90 shadow-[0_0_40px_rgba(255,255,255,0.15)]`}>
+      <a href={href} className={`${base} bg-orange-500 text-white hover:bg-orange-600`}>
         {children}
         {Icon && <Icon className="w-4 h-4 transition-transform group-hover:translate-x-0.5" />}
       </a>
@@ -125,7 +117,6 @@ const Nav = () => {
     { label: 'Features', href: '#features' },
     { label: 'Chaos Demo', href: '#chaos' },
     { label: 'How it works', href: '#how' },
-    { label: 'Pricing', href: '#pricing' },
     { label: 'Developers', href: '#developers' },
   ]
 
@@ -143,9 +134,8 @@ const Nav = () => {
           scrolled ? 'glass-strong px-4 py-2.5' : 'px-2 py-2'
         }`}>
           <a href="#" className="flex items-center gap-2 group">
-            <div className="relative w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 flex items-center justify-center shadow-[0_0_20px_rgba(99,102,241,0.5)]">
+            <div className="relative w-8 h-8 rounded-lg bg-orange-500 flex items-center justify-center">
               <Shield className="w-4 h-4 text-white" />
-              <div className="absolute inset-0 rounded-lg bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 blur-md opacity-50 -z-10" />
             </div>
             <span className="font-semibold tracking-tight text-white">Sentinel-SRE</span>
           </a>
@@ -168,7 +158,7 @@ const Nav = () => {
             </a>
             <a
               href="/register"
-              className="px-4 py-1.5 text-sm rounded-full bg-white text-black hover:bg-white/90 transition-colors font-medium"
+              className="px-4 py-1.5 text-sm rounded-full bg-orange-500 text-white hover:bg-orange-600 transition-colors font-medium"
               data-testid="nav-launch-dashboard-link"
             >
               Launch Dashboard
@@ -197,7 +187,7 @@ const Nav = () => {
                   {l.label}
                 </a>
               ))}
-              <a href="/register" onClick={() => setOpen(false)} className="block text-center mt-2 px-4 py-2 rounded-full bg-white text-black text-sm font-medium">
+              <a href="/register" onClick={() => setOpen(false)} className="block text-center mt-2 px-4 py-2 rounded-full bg-orange-500 text-white text-sm font-medium">
                 Get started
               </a>
             </motion.div>
@@ -213,57 +203,45 @@ const Nav = () => {
    ========================================================= */
 
 const Hero = () => {
-  const { scrollYProgress } = useScroll()
-  const y = useTransform(scrollYProgress, [0, 0.3], [0, -60])
-
   return (
-    <section className="relative pt-40 pb-24 lg:pt-48 lg:pb-32 overflow-hidden">
-      {/* Ambient layers */}
-      <div className="absolute inset-0 grid-bg radial-fade" />
-      <div className="absolute inset-0 bg-gradient-to-b from-transparent via-black/0 to-black pointer-events-none" />
-
-      {/* Glowing orbs */}
-      <div className="absolute -top-40 left-1/2 -translate-x-1/2 w-[900px] h-[600px] rounded-full bg-indigo-600/20 blur-[120px] animate-pulse-slow pointer-events-none" />
-      <div className="absolute top-32 left-10 w-72 h-72 rounded-full bg-purple-600/20 blur-[100px] animate-blob pointer-events-none" />
-      <div className="absolute top-10 right-10 w-72 h-72 rounded-full bg-cyan-500/10 blur-[100px] animate-blob pointer-events-none" style={{ animationDelay: '4s' }} />
-
-      <motion.div style={{ y }} className="container mx-auto px-4 lg:px-8 relative">
+    <section className="relative pt-32 pb-24 lg:pt-40 lg:pb-32 overflow-hidden">
+      <div className="container mx-auto px-4 lg:px-8 relative">
         <div className="max-w-4xl mx-auto text-center">
           <FadeIn>
-            <GradientBadge icon={Sparkles}>
+            <Badge icon={Sparkles}>
               New · Chaos Simulation Engine 2.0 is here
-            </GradientBadge>
+            </Badge>
           </FadeIn>
 
           <FadeIn delay={0.1}>
-            <h1 className="mt-6 text-4xl sm:text-5xl lg:text-7xl font-semibold tracking-tight leading-[1.05]">
-              <span className="text-gradient">Detect, Diagnose, and Learn</span>
+            <h1 className="mt-6 text-4xl sm:text-5xl lg:text-7xl font-semibold tracking-tight leading-[1.1]">
+              <span className="text-white">Detect, Diagnose, and Learn</span>
               <br />
               <span className="text-white/90">from System Failures — </span>
-              <span className="text-gradient-blue italic">Automatically</span>
+              <span className="text-orange-400 italic">Automatically</span>
             </h1>
           </FadeIn>
 
           <FadeIn delay={0.2}>
-            <p className="mt-7 text-lg lg:text-xl text-white/60 max-w-2xl mx-auto leading-relaxed">
+            <p className="mt-6 text-lg lg:text-xl text-white/60 max-w-2xl mx-auto leading-relaxed">
               Sentinel-SRE uses AI, chaos simulations, and real-time signals to identify root causes
               and generate actionable insights in seconds.
             </p>
           </FadeIn>
 
           <FadeIn delay={0.3}>
-            <div className="mt-10 flex flex-wrap items-center justify-center gap-3">
-              <GlowButton variant="primary" href="/dashboard" icon={ArrowRight}>
+            <div className="mt-8 flex flex-wrap items-center justify-center gap-4">
+              <Button variant="primary" href="/dashboard" icon={ArrowRight}>
                 Launch Dashboard
-              </GlowButton>
-              <GlowButton variant="secondary" href="#preview" icon={Play}>
+              </Button>
+              <Button variant="secondary" href="#chaos" icon={Play}>
                 View Demo
-              </GlowButton>
+              </Button>
             </div>
           </FadeIn>
 
           <FadeIn delay={0.4}>
-            <div className="mt-10 flex flex-wrap items-center justify-center gap-6 text-xs text-white/40">
+            <div className="mt-8 flex flex-wrap items-center justify-center gap-6 text-xs text-white/40">
               <div className="flex items-center gap-2">
                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
                 No credit card required
@@ -279,236 +257,11 @@ const Hero = () => {
             </div>
           </FadeIn>
         </div>
-
-        {/* Dashboard preview */}
-        <FadeIn delay={0.5} y={40}>
-          <div id="preview" className="relative mt-20 lg:mt-28 max-w-6xl mx-auto">
-            <div className="absolute -inset-8 bg-gradient-to-r from-indigo-500/20 via-purple-500/20 to-cyan-500/20 blur-3xl rounded-full opacity-60" />
-            <DashboardMock />
-          </div>
-        </FadeIn>
-
-        {/* Logo strip */}
-        <FadeIn delay={0.6}>
-          <div className="mt-20 text-center">
-            <p className="text-xs uppercase tracking-[0.2em] text-white/30 mb-6">
-              Trusted by engineering teams at
-            </p>
-            <div className="flex flex-wrap items-center justify-center gap-x-12 gap-y-4 opacity-60">
-              {['Acme Corp', 'Vertex', 'Quantum', 'Nebula', 'Linear', 'Helios'].map((name: string) => (
-                <span key={name} className="text-white/50 font-semibold tracking-tight text-lg">
-                  {name}
-                </span>
-              ))}
-            </div>
-          </div>
-        </FadeIn>
-      </motion.div>
+      </div>
     </section>
   )
 }
 
-/* =========================================================
-   DASHBOARD MOCK
-   ========================================================= */
-
-const DashboardMock = () => {
-  const [selectedIncident, setSelectedIncident] = useState(0)
-
-  const incidents = [
-    {
-      id: 'INC-4829',
-      title: 'api-gateway 5xx spike',
-      service: 'api-gateway',
-      severity: 'critical',
-      time: '2m ago',
-      confidence: 94,
-      cause: 'Connection pool exhausted on primary DB replica after surge in write traffic.',
-      signals: ['CPU +38%', 'DB conn 980/1000', 'p99 latency 4.2s'],
-    },
-    {
-      id: 'INC-4828',
-      title: 'checkout-service timeout',
-      service: 'checkout-service',
-      severity: 'high',
-      time: '14m ago',
-      confidence: 87,
-      cause: 'Downstream payment provider introduced 3s retry delay.',
-      signals: ['Upstream p95 2.8s', 'Retries +420%', 'Error rate 6.2%'],
-    },
-    {
-      id: 'INC-4827',
-      title: 'auth-service memory leak',
-      service: 'auth-service',
-      severity: 'medium',
-      time: '41m ago',
-      confidence: 78,
-      cause: 'Session cache TTL misconfiguration after v3.12 rollout.',
-      signals: ['Mem +12%/hr', 'GC pauses 180ms', 'Heap 78%'],
-    },
-  ]
-
-  const inc = incidents[selectedIncident]
-
-  return (
-    <div className="relative rounded-2xl glass-strong glow-border overflow-hidden shadow-[0_50px_120px_-20px_rgba(79,70,229,0.35)]">
-      {/* Titlebar */}
-      <div className="flex items-center gap-2 px-4 py-3 border-b border-white/5 bg-black/30">
-        <div className="flex gap-1.5">
-          <div className="w-3 h-3 rounded-full bg-red-500/80" />
-          <div className="w-3 h-3 rounded-full bg-yellow-500/80" />
-          <div className="w-3 h-3 rounded-full bg-green-500/80" />
-        </div>
-        <div className="flex-1 text-center text-xs text-white/40 font-mono">
-          sentinel-sre.io/dashboard
-        </div>
-        <div className="flex items-center gap-2 text-xs text-white/40">
-          <span className="inline-flex items-center gap-1.5">
-            <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-            </span>
-            Live
-          </span>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-12 min-h-[520px]">
-        {/* Sidebar */}
-        <div className="hidden md:flex col-span-2 border-r border-white/5 bg-black/40 flex-col p-3 gap-1">
-          {[
-            { icon: Activity, label: 'Incidents', active: true },
-            { icon: Radio, label: 'Signals' },
-            { icon: Brain, label: 'RCA' },
-            { icon: GitBranch, label: 'Chaos' },
-            { icon: FileText, label: 'Postmortems' },
-            { icon: Database, label: 'Sources' },
-            { icon: Bell, label: 'Alerts' },
-          ].map((item: any, i: number) => (
-            <div
-              key={i}
-              className={`flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs transition-colors ${
-                item.active
-                  ? 'bg-white/10 text-white'
-                  : 'text-white/50 hover:bg-white/5 hover:text-white/80'
-              }`}
-            >
-              <item.icon className="w-3.5 h-3.5" />
-              <span>{item.label}</span>
-            </div>
-          ))}
-        </div>
-
-        {/* Incident feed */}
-        <div className="col-span-12 md:col-span-4 border-r border-white/5">
-          <div className="px-4 py-3 border-b border-white/5 flex items-center justify-between">
-            <div>
-              <p className="text-xs text-white/40">Incident feed</p>
-              <p className="text-sm font-medium text-white">3 active</p>
-            </div>
-            <div className="flex items-center gap-1.5 text-xs text-emerald-400">
-              <TrendingUp className="w-3 h-3" />
-              -42% MTTR
-            </div>
-          </div>
-          <div className="divide-y divide-white/5">
-            {incidents.map((incident: any, i: number) => (
-              <button
-                key={incident.id}
-                onClick={() => setSelectedIncident(i)}
-                className={`w-full text-left px-4 py-3 transition-colors ${
-                  selectedIncident === i ? 'bg-white/5' : 'hover:bg-white/[0.02]'
-                }`}
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span
-                        className={`w-1.5 h-1.5 rounded-full ${
-                          incident.severity === 'critical'
-                            ? 'bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.8)]'
-                            : incident.severity === 'high'
-                            ? 'bg-orange-500'
-                            : 'bg-yellow-500'
-                        }`}
-                      />
-                      <span className="text-xs font-mono text-white/40">{incident.id}</span>
-                    </div>
-                    <p className="text-sm font-medium text-white truncate">{incident.title}</p>
-                    <p className="text-xs text-white/40 mt-1 font-mono">{incident.service}</p>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <span className="text-xs text-white/40">{incident.time}</span>
-                  </div>
-                </div>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* RCA panel */}
-        <div className="col-span-12 md:col-span-6 p-5 space-y-4 bg-gradient-to-br from-transparent to-indigo-950/10">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <div className="flex items-center gap-2 mb-1">
-                <span className="text-xs font-mono text-white/40">{inc.id}</span>
-                <span className="px-1.5 py-0.5 text-[10px] uppercase tracking-wider rounded bg-red-500/15 text-red-400 border border-red-500/20">
-                  {inc.severity}
-                </span>
-              </div>
-              <h3 className="text-base font-semibold text-white">{inc.title}</h3>
-            </div>
-            <ConfidenceBadge value={inc.confidence} />
-          </div>
-
-          {/* Live chart */}
-          <MiniChart />
-
-          {/* AI RCA card */}
-          <motion.div
-            key={inc.id}
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.4 }}
-            className="glass rounded-xl p-3.5 border border-indigo-500/20"
-          >
-            <div className="flex items-center gap-2 mb-2">
-              <div className="w-6 h-6 rounded-md bg-gradient-to-br from-indigo-500 to-purple-500 flex items-center justify-center">
-                <Brain className="w-3.5 h-3.5 text-white" />
-              </div>
-              <span className="text-xs font-medium text-white/80">AI Root Cause Analysis</span>
-              <span className="ml-auto text-[10px] text-white/40 font-mono">gpt · claude · llama</span>
-            </div>
-            <p className="text-sm text-white/70 leading-relaxed">{inc.cause}</p>
-            <div className="flex flex-wrap gap-1.5 mt-3">
-              {inc.signals.map((s: string, i: number) => (
-                <span
-                  key={i}
-                  className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-white/5 text-white/60 border border-white/10"
-                >
-                  {s}
-                </span>
-              ))}
-            </div>
-          </motion.div>
-
-          {/* Actions */}
-          <div className="flex flex-wrap gap-2">
-            <button className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white text-black text-xs font-medium hover:bg-white/90">
-              Generate postmortem <ArrowRight className="w-3 h-3" />
-            </button>
-            <button className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg glass text-white/80 text-xs font-medium hover:bg-white/10">
-              <GitBranch className="w-3 h-3" /> Run chaos test
-            </button>
-            <button className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg glass text-white/80 text-xs font-medium hover:bg-white/10">
-              <ChevronRight className="w-3 h-3" /> View timeline
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
 
 interface ConfidenceBadgeProps {
   value: number;
@@ -516,7 +269,7 @@ interface ConfidenceBadgeProps {
 
 const ConfidenceBadge = ({ value }: ConfidenceBadgeProps) => {
   const color =
-    value >= 90 ? 'from-emerald-400 to-teal-500' : value >= 80 ? 'from-cyan-400 to-blue-500' : 'from-yellow-400 to-orange-500'
+    value >= 90 ? 'text-emerald-400' : value >= 80 ? 'text-orange-400' : 'text-yellow-400'
   return (
     <div className="relative">
       <div className="relative w-16 h-16">
@@ -537,8 +290,8 @@ const ConfidenceBadge = ({ value }: ConfidenceBadgeProps) => {
           />
           <defs>
             <linearGradient id="grad" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0%" stopColor="#34d399" />
-              <stop offset="100%" stopColor="#6366f1" />
+              <stop offset="0%" stopColor="#fb923c" />
+              <stop offset="100%" stopColor="#f97316" />
             </linearGradient>
           </defs>
         </svg>
@@ -552,51 +305,6 @@ const ConfidenceBadge = ({ value }: ConfidenceBadgeProps) => {
   )
 }
 
-const MiniChart = () => {
-  // Deterministic pseudo-random data
-  const points = [12, 18, 15, 22, 19, 25, 30, 28, 35, 40, 52, 68, 82, 74, 90, 65, 48, 40, 35, 30]
-  const max = Math.max(...points)
-  const width = 100
-  const height = 28
-  const path = points
-    .map((p: number, i: number) => {
-      const x = (i / (points.length - 1)) * width
-      const y = height - (p / max) * height
-      return `${i === 0 ? 'M' : 'L'} ${x} ${y}`
-    })
-    .join(' ')
-  const area = `${path} L ${width} ${height} L 0 ${height} Z`
-
-  return (
-    <div className="glass rounded-xl p-3.5">
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-2">
-          <Gauge className="w-3.5 h-3.5 text-cyan-400" />
-          <span className="text-xs text-white/70 font-medium">Error rate · last 15m</span>
-        </div>
-        <span className="text-xs font-mono text-red-400">↑ 6.2%</span>
-      </div>
-      <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-16" preserveAspectRatio="none">
-        <defs>
-          <linearGradient id="areaGrad" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="rgba(239,68,68,0.35)" />
-            <stop offset="100%" stopColor="rgba(239,68,68,0)" />
-          </linearGradient>
-        </defs>
-        <path d={area} fill="url(#areaGrad)" />
-        <motion.path
-          d={path}
-          fill="none"
-          stroke="#f87171"
-          strokeWidth="0.6"
-          initial={{ pathLength: 0 }}
-          animate={{ pathLength: 1 }}
-          transition={{ duration: 1.5, ease: 'easeOut' }}
-        />
-      </svg>
-    </div>
-  )
-}
 
 /* =========================================================
    FEATURES
@@ -608,57 +316,51 @@ const Features = () => {
       icon: Brain,
       title: 'AI Root Cause Analysis',
       desc: 'Multi-model LLM ensemble correlates logs, metrics, and traces to surface the true cause — not just the symptom.',
-      tint: 'from-indigo-500/20 to-purple-500/20',
-      iconColor: 'text-indigo-400',
+      iconColor: 'text-orange-400',
     },
     {
       icon: GitBranch,
       title: 'Chaos Engineering Simulator',
       desc: 'Safely inject failures in staging or prod shadow traffic to validate resilience before your users feel it.',
-      tint: 'from-pink-500/20 to-orange-500/20',
       iconColor: 'text-pink-400',
     },
     {
       icon: Gauge,
       title: 'Confidence Scoring Engine',
       desc: 'Every AI verdict ships with a calibrated confidence score, so you know when to trust — and when to dig deeper.',
-      tint: 'from-emerald-500/20 to-teal-500/20',
       iconColor: 'text-emerald-400',
     },
     {
       icon: RefreshCw,
       title: 'Feedback-Aware Learning (RAG)',
       desc: 'Engineers rate explanations; Sentinel stores context in a retrieval layer that gets smarter with every incident.',
-      tint: 'from-cyan-500/20 to-blue-500/20',
       iconColor: 'text-cyan-400',
     },
     {
       icon: FileText,
       title: 'Automated Postmortems',
       desc: 'Structured, blameless postmortems generated in seconds — timelines, impact, fixes, action items. Ready to publish.',
-      tint: 'from-violet-500/20 to-fuchsia-500/20',
       iconColor: 'text-violet-400',
     },
     {
       icon: Layers,
       title: 'Unified Telemetry',
       desc: 'Bring your own stack — Datadog, Prometheus, OpenTelemetry, Loki. Sentinel reasons across all of it.',
-      tint: 'from-amber-500/20 to-rose-500/20',
       iconColor: 'text-amber-400',
     },
   ]
 
   return (
-    <section id="features" className="relative py-28 lg:py-36">
-      <div className="absolute inset-0 bg-gradient-to-b from-black via-zinc-950/50 to-black pointer-events-none" />
+    <section id="features" className="relative py-24 lg:py-32">
+      <div className="absolute inset-0 bg-[#0a0e1a] pointer-events-none" />
       <div className="container mx-auto px-4 lg:px-8 relative">
         <FadeIn>
           <div className="text-center max-w-2xl mx-auto mb-16">
-            <GradientBadge icon={Zap}>Core capabilities</GradientBadge>
-            <h2 className="mt-5 text-4xl lg:text-5xl font-semibold tracking-tight text-gradient">
+            <Badge icon={Zap}>Core capabilities</Badge>
+            <h2 className="mt-4 text-4xl lg:text-5xl font-semibold tracking-tight text-white">
               Every signal. Every incident.<br />One resilient system.
             </h2>
-            <p className="mt-5 text-white/50 text-lg">
+            <p className="mt-4 text-white/50 text-lg leading-relaxed">
               Purpose-built for modern SRE teams who want less paging and more insight.
             </p>
           </div>
@@ -680,20 +382,18 @@ interface FeatureCardProps {
   icon: any;
   title: string;
   desc: string;
-  tint: string;
   iconColor?: string;
 }
 
-const FeatureCard = ({ icon: Icon, title, desc, tint, iconColor }: FeatureCardProps) => (
+const FeatureCard = ({ icon: Icon, title, desc, iconColor }: FeatureCardProps) => (
   <div className="group relative h-full rounded-2xl glass p-6 transition-all duration-500 hover:-translate-y-1 hover:border-white/15 overflow-hidden">
-    <div className={`absolute -top-20 -right-20 w-48 h-48 rounded-full bg-gradient-to-br ${tint} blur-3xl opacity-0 group-hover:opacity-100 transition-opacity duration-700`} />
     <div className="relative">
-      <div className={`w-11 h-11 rounded-xl glass flex items-center justify-center mb-5 group-hover:scale-110 transition-transform duration-500`}>
+      <div className={`w-11 h-11 rounded-xl glass flex items-center justify-center mb-4 group-hover:scale-110 transition-transform duration-500`}>
         <Icon className={`w-5 h-5 ${iconColor}`} />
       </div>
       <h3 className="text-lg font-semibold text-white mb-2">{title}</h3>
       <p className="text-sm text-white/55 leading-relaxed">{desc}</p>
-      <div className="mt-5 inline-flex items-center gap-1 text-xs text-white/40 group-hover:text-white/80 transition-colors">
+      <div className="mt-4 inline-flex items-center gap-1 text-xs text-white/40 group-hover:text-white/80 transition-colors">
         Learn more <ArrowRight className="w-3 h-3 transition-transform group-hover:translate-x-0.5" />
       </div>
     </div>
@@ -729,27 +429,26 @@ const HowItWorks = () => {
   ]
 
   return (
-    <section id="how" className="relative py-28 lg:py-36">
+    <section id="how" className="relative py-24 lg:py-32">
       <div className="container mx-auto px-4 lg:px-8">
         <FadeIn>
-          <div className="text-center max-w-2xl mx-auto mb-20">
-            <GradientBadge icon={Cpu}>How it works</GradientBadge>
-            <h2 className="mt-5 text-4xl lg:text-5xl font-semibold tracking-tight text-gradient">
+          <div className="text-center max-w-2xl mx-auto mb-16">
+            <Badge icon={Cpu}>How it works</Badge>
+            <h2 className="mt-4 text-4xl lg:text-5xl font-semibold tracking-tight text-white">
               From signal to postmortem<br />in four steps
             </h2>
           </div>
         </FadeIn>
 
         <div className="relative">
-          {/* connecting gradient line */}
-          <div className="hidden lg:block absolute top-10 left-[8%] right-[8%] h-px bg-gradient-to-r from-transparent via-indigo-500/40 to-transparent" />
+          {/* connecting line */}
+          <div className="hidden lg:block absolute top-10 left-[8%] right-[8%] h-px bg-white/10" />
           <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6 relative">
             {steps.map((step: any, i: number) => (
               <FadeIn key={step.title} delay={i * 0.08}>
                 <div className="relative">
                   <div className="relative z-10 flex flex-col items-start">
-                    <div className="relative w-20 h-20 rounded-2xl glass flex items-center justify-center mb-5 group">
-                      <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-indigo-500/30 to-purple-500/10 blur-lg opacity-50" />
+                    <div className="relative w-20 h-20 rounded-2xl glass flex items-center justify-center mb-4 group">
                       <step.icon className="w-7 h-7 text-white relative" />
                       <span className="absolute -top-2 -right-2 w-7 h-7 rounded-full bg-white text-black text-xs font-semibold flex items-center justify-center shadow-lg">
                         {i + 1}
@@ -805,16 +504,15 @@ const WhySentinel = () => {
   ]
 
   return (
-    <section id="why" className="relative py-28 lg:py-36 overflow-hidden">
-      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] rounded-full bg-indigo-900/20 blur-[150px] pointer-events-none" />
+    <section id="why" className="relative py-24 lg:py-32 overflow-hidden">
       <div className="container mx-auto px-4 lg:px-8 relative">
         <FadeIn>
           <div className="text-center max-w-2xl mx-auto mb-16">
-            <GradientBadge icon={Star}>Why Sentinel-SRE</GradientBadge>
-            <h2 className="mt-5 text-4xl lg:text-5xl font-semibold tracking-tight text-gradient">
+            <Badge icon={Star}>Why Sentinel-SRE</Badge>
+            <h2 className="mt-4 text-4xl lg:text-5xl font-semibold tracking-tight text-white">
               Not just another<br />observability tool
             </h2>
-            <p className="mt-5 text-white/50 text-lg">
+            <p className="mt-4 text-white/50 text-lg leading-relaxed">
               Sentinel-SRE is the reasoning layer your dashboards have been waiting for.
             </p>
           </div>
@@ -823,18 +521,17 @@ const WhySentinel = () => {
         <div className="grid md:grid-cols-2 gap-5">
           {reasons.map((r, i) => (
             <FadeIn key={r.title} delay={i * 0.05}>
-              <div className="group relative rounded-2xl glass p-7 h-full overflow-hidden hover:border-white/15 transition-all duration-500">
-                <div className="absolute -top-16 -right-16 w-52 h-52 bg-gradient-to-br from-indigo-500/10 to-purple-500/5 rounded-full blur-3xl opacity-0 group-hover:opacity-100 transition-opacity duration-700" />
+              <div className="group relative rounded-2xl glass p-6 h-full overflow-hidden hover:border-white/15 transition-all duration-500">
                 <div className="flex items-start justify-between gap-6 relative">
                   <div className="flex-1">
-                    <div className="w-10 h-10 rounded-lg glass flex items-center justify-center mb-4">
-                      <r.icon className="w-4 h-4 text-indigo-400" />
+              <div className="w-10 h-10 rounded-lg glass flex items-center justify-center mb-4">
+                      <r.icon className="w-4 h-4 text-orange-400" />
                     </div>
                     <h3 className="text-xl font-semibold text-white mb-2">{r.title}</h3>
                     <p className="text-sm text-white/55 leading-relaxed max-w-md">{r.desc}</p>
                   </div>
                   <div className="text-right shrink-0">
-                    <div className="text-3xl font-semibold text-gradient-blue">{r.stat}</div>
+                    <div className="text-3xl font-semibold text-orange-400">{r.stat}</div>
                     <div className="text-xs text-white/40 mt-1">{r.label}</div>
                   </div>
                 </div>
@@ -853,20 +550,20 @@ const WhySentinel = () => {
 
 const DeveloperFocus = () => {
   return (
-    <section id="developers" className="relative py-28 lg:py-36">
+    <section id="developers" className="relative py-24 lg:py-32">
       <div className="container mx-auto px-4 lg:px-8">
         <div className="grid lg:grid-cols-2 gap-12 lg:gap-16 items-center">
           <FadeIn>
             <div>
-              <GradientBadge icon={Code2}>Built for engineers</GradientBadge>
-              <h2 className="mt-5 text-4xl lg:text-5xl font-semibold tracking-tight text-gradient">
+              <Badge icon={Code2}>Built for engineers</Badge>
+              <h2 className="mt-4 text-4xl lg:text-5xl font-semibold tracking-tight text-white">
                 Wire it up in<br />under a minute
               </h2>
-              <p className="mt-5 text-white/55 text-lg leading-relaxed">
+              <p className="mt-4 text-white/55 text-lg leading-relaxed">
                 A clean API, typed SDKs, and zero-config OpenTelemetry support. Sentinel
                 fits the way you already ship code.
               </p>
-              <div className="mt-8 space-y-3">
+              <div className="mt-6 space-y-3">
                 {[
                   'TypeScript, Go, Python, and Rust SDKs',
                   'OpenTelemetry-native — drop-in collector',
@@ -879,10 +576,10 @@ const DeveloperFocus = () => {
                   </div>
                 ))}
               </div>
-              <div className="mt-8 flex flex-wrap gap-3">
-                <GlowButton variant="secondary" href="#" icon={Github}>
+              <div className="mt-6 flex flex-wrap gap-3">
+                <Button variant="secondary" href="#" icon={Github}>
                   Read the docs
-                </GlowButton>
+                </Button>
               </div>
             </div>
           </FadeIn>
@@ -919,8 +616,7 @@ const CodeBlock = () => {
 
   return (
     <div className="relative">
-      <div className="absolute -inset-6 bg-gradient-to-r from-indigo-500/20 via-purple-500/20 to-pink-500/20 blur-3xl rounded-full opacity-50" />
-      <div className="relative rounded-2xl glass-strong glow-border overflow-hidden shadow-[0_40px_80px_-20px_rgba(79,70,229,0.35)]">
+      <div className="relative rounded-2xl glass-strong overflow-hidden shadow-lg">
         <div className="flex items-center gap-2 px-4 py-3 border-b border-white/5 bg-black/40">
           <div className="flex gap-1.5">
             <div className="w-2.5 h-2.5 rounded-full bg-red-500/80" />
@@ -947,81 +643,6 @@ const CodeBlock = () => {
   )
 }
 
-/* =========================================================
-   TESTIMONIALS
-   ========================================================= */
-
-const Testimonials = () => {
-  const items = [
-    {
-      quote: 'Sentinel-SRE reduced our debugging time by 70%. It caught a memory leak our dashboards had missed for two weeks.',
-      name: 'Priya Raghavan',
-      role: 'Staff SRE · Fintech scale-up',
-      avatar: 'PR',
-      accent: 'from-indigo-500 to-purple-500',
-    },
-    {
-      quote: "It's like having an AI SRE on-call. The postmortems alone pay for the product — saves us hours per incident.",
-      name: 'Marcus Feldman',
-      role: 'Head of Platform · B2B SaaS',
-      avatar: 'MF',
-      accent: 'from-cyan-500 to-blue-500',
-    },
-    {
-      quote: 'The chaos simulator found three resilience bugs before our peak launch. We would have taken a Sev-1.',
-      name: 'Alicia Okafor',
-      role: 'Principal Engineer · E-commerce',
-      avatar: 'AO',
-      accent: 'from-pink-500 to-orange-500',
-    },
-    {
-      quote: "Confidence scoring is the killer feature. I actually trust the AI verdicts now — because it tells me when it's unsure.",
-      name: 'Daniel Kwon',
-      role: 'SRE Lead · Streaming platform',
-      avatar: 'DK',
-      accent: 'from-emerald-500 to-teal-500',
-    },
-  ]
-
-  return (
-    <section className="relative py-28 lg:py-36 overflow-hidden">
-      <div className="container mx-auto px-4 lg:px-8">
-        <FadeIn>
-          <div className="text-center max-w-2xl mx-auto mb-16">
-            <GradientBadge icon={Star}>Loved by SRE teams</GradientBadge>
-            <h2 className="mt-5 text-4xl lg:text-5xl font-semibold tracking-tight text-gradient">
-              Reliability, rebuilt<br />by engineers who ship
-            </h2>
-          </div>
-        </FadeIn>
-
-        <div className="grid md:grid-cols-2 gap-5">
-          {items.map((t, i) => (
-            <FadeIn key={t.name} delay={i * 0.05}>
-              <div className="group relative rounded-2xl glass p-7 h-full hover:border-white/15 transition-all duration-500">
-                <div className="flex gap-1 mb-4">
-                  {Array.from({ length: 5 }).map((_: any, i: number) => (
-                    <Star key={i} className="w-3.5 h-3.5 fill-yellow-400 text-yellow-400" />
-                  ))}
-                </div>
-                <p className="text-white/85 text-lg leading-relaxed mb-6">&ldquo;{t.quote}&rdquo;</p>
-                <div className="flex items-center gap-3">
-                  <div className={`w-10 h-10 rounded-full bg-gradient-to-br ${t.accent} flex items-center justify-center font-semibold text-sm text-white`}>
-                    {t.avatar}
-                  </div>
-                  <div>
-                    <div className="text-sm font-medium text-white">{t.name}</div>
-                    <div className="text-xs text-white/50">{t.role}</div>
-                  </div>
-                </div>
-              </div>
-            </FadeIn>
-          ))}
-        </div>
-      </div>
-    </section>
-  )
-}
 
 /* =========================================================
    FINAL CTA
@@ -1029,31 +650,27 @@ const Testimonials = () => {
 
 const FinalCTA = () => {
   return (
-    <section id="cta" className="relative py-28 lg:py-36">
+    <section id="cta" className="relative py-24 lg:py-32">
       <div className="container mx-auto px-4 lg:px-8">
         <FadeIn>
-          <div className="relative rounded-3xl overflow-hidden glass-strong p-10 lg:p-20 text-center">
-            {/* gradient orb */}
-            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[400px] rounded-full bg-gradient-to-r from-indigo-500/30 via-purple-500/30 to-pink-500/30 blur-[120px] animate-pulse-slow pointer-events-none" />
-            <div className="absolute inset-0 grid-bg radial-fade pointer-events-none" />
-
+          <div className="relative rounded-3xl glass-strong p-8 lg:p-16 text-center">
             <div className="relative">
-              <GradientBadge icon={Sparkles}>Ready to ship resilience</GradientBadge>
-              <h2 className="mt-6 text-4xl lg:text-6xl font-semibold tracking-tight text-gradient max-w-3xl mx-auto">
+              <Badge icon={Sparkles}>Ready to ship resilience</Badge>
+              <h2 className="mt-4 text-4xl lg:text-6xl font-semibold tracking-tight text-white max-w-3xl mx-auto">
                 Start building resilient<br />systems today
               </h2>
-              <p className="mt-6 text-white/60 text-lg max-w-xl mx-auto">
+              <p className="mt-4 text-white/60 text-lg max-w-xl mx-auto leading-relaxed">
                 Deploy Sentinel-SRE in minutes. Watch incidents resolve themselves.
               </p>
-              <div className="mt-10 flex flex-wrap items-center justify-center gap-3">
-                <GlowButton variant="primary" href="/dashboard" icon={ArrowRight}>
+              <div className="mt-8 flex flex-wrap items-center justify-center gap-4">
+                <Button variant="primary" href="/dashboard" icon={ArrowRight}>
                   Launch Dashboard
-                </GlowButton>
-                <GlowButton variant="secondary" href="#" icon={Github}>
+                </Button>
+                <Button variant="secondary" href="#" icon={Github}>
                   Star on GitHub
-                </GlowButton>
+                </Button>
               </div>
-              <div className="mt-8 text-xs text-white/40">
+              <div className="mt-6 text-xs text-white/40">
                 Free for teams under 5 · No credit card
               </div>
             </div>
@@ -1075,7 +692,7 @@ const Footer = () => {
         <div className="grid md:grid-cols-5 gap-10">
           <div className="md:col-span-2">
             <div className="flex items-center gap-2 mb-4">
-              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 flex items-center justify-center shadow-[0_0_20px_rgba(99,102,241,0.4)]">
+              <div className="w-8 h-8 rounded-lg bg-orange-500 flex items-center justify-center">
                 <Shield className="w-4 h-4 text-white" />
               </div>
               <span className="font-semibold text-white">Sentinel-SRE</span>
@@ -1083,7 +700,7 @@ const Footer = () => {
             <p className="text-sm text-white/50 max-w-xs leading-relaxed">
               AI-powered root cause analysis and automated postmortems for modern systems.
             </p>
-            <div className="mt-5 flex items-center gap-3">
+            <div className="mt-4 flex items-center gap-3">
               <a href="#" className="w-9 h-9 rounded-lg glass flex items-center justify-center hover:bg-white/10 transition-colors">
                 <Github className="w-4 h-4 text-white/70" />
               </a>
@@ -1092,7 +709,7 @@ const Footer = () => {
 
           <FooterCol
             title="Product"
-            links={['Features', 'How it works', 'Changelog', 'Pricing', 'Roadmap']}
+            links={['Features', 'How it works', 'Changelog', 'Roadmap']}
           />
           <FooterCol
             title="Developers"
@@ -1106,7 +723,7 @@ const Footer = () => {
 
         <div className="mt-14 pt-6 border-t border-white/5 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
           <p className="text-xs text-white/40">
-            © 2025 Sentinel-SRE · Built with Next.js, Tailwind, and Framer Motion
+            2025 Sentinel-SRE · Built with Next.js, Tailwind, and Framer Motion
           </p>
           <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-white/40">
             <span>Crafted by the Sentinel team</span>
@@ -1162,16 +779,16 @@ const Integrations = () => {
   ]
 
   return (
-    <section id="integrations" className="relative py-28 lg:py-36">
-      <div className="absolute inset-0 bg-gradient-to-b from-black via-zinc-950/40 to-black pointer-events-none" />
+    <section id="integrations" className="relative py-24 lg:py-32">
+      <div className="absolute inset-0 bg-[#0a0e1a] pointer-events-none" />
       <div className="container mx-auto px-4 lg:px-8 relative">
         <FadeIn>
           <div className="text-center max-w-2xl mx-auto mb-16">
-            <GradientBadge icon={Plug}>Integrations</GradientBadge>
-            <h2 className="mt-5 text-4xl lg:text-5xl font-semibold tracking-tight text-gradient">
+            <Badge icon={Plug}>Integrations</Badge>
+            <h2 className="mt-4 text-4xl lg:text-5xl font-semibold tracking-tight text-white">
               Plugs into every<br />tool your team already uses
             </h2>
-            <p className="mt-5 text-white/50 text-lg">
+            <p className="mt-4 text-white/50 text-lg leading-relaxed">
               Bring your own stack. Sentinel-SRE reasons across logs, metrics, traces, and alerts — wherever they live.
             </p>
           </div>
@@ -1186,7 +803,7 @@ const Integrations = () => {
         </div>
 
         <FadeIn delay={0.3}>
-          <div className="mt-10 text-center text-sm text-white/40">
+          <div className="mt-8 text-center text-sm text-white/40">
             ...and 40+ more via our open API.{' '}
             <a href="#developers" className="text-white/80 hover:text-white underline underline-offset-4">
               See the full list →
@@ -1208,14 +825,10 @@ const IntegrationCard = ({ name, color, tag }: IntegrationCardProps) => {
   const initials = name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
   return (
     <div className="group relative rounded-2xl glass p-5 h-full flex items-center gap-4 overflow-hidden hover:border-white/15 transition-all duration-500 hover:-translate-y-0.5">
-      <div
-        className="absolute -top-12 -right-12 w-32 h-32 rounded-full blur-3xl opacity-0 group-hover:opacity-40 transition-opacity duration-700"
-        style={{ backgroundColor: color }}
-      />
       <div className="relative w-11 h-11 rounded-xl glass flex items-center justify-center shrink-0 border border-white/10 group-hover:scale-110 transition-transform duration-500">
         <span
           className="text-sm font-bold"
-          style={{ color, textShadow: `0 0 18px ${color}80` }}
+          style={{ color }}
         >
           {initials}
         </span>
@@ -1373,18 +986,15 @@ const ChaosSimulator = () => {
   const isBusy = phase === 'injecting' || phase === 'detecting' || phase === 'analyzing'
 
   return (
-    <section id="chaos" className="relative py-28 lg:py-36 overflow-hidden">
-      <div className="absolute top-1/3 left-1/2 -translate-x-1/2 w-[1000px] h-[500px] rounded-full bg-orange-500/10 blur-[140px] pointer-events-none" />
-      <div className="absolute top-1/3 left-1/3 w-[500px] h-[500px] rounded-full bg-indigo-600/10 blur-[120px] pointer-events-none" />
-
+    <section id="chaos" className="relative py-24 lg:py-32 overflow-hidden">
       <div className="container mx-auto px-4 lg:px-8 relative">
         <FadeIn>
-          <div className="text-center max-w-2xl mx-auto mb-14">
-            <GradientBadge icon={Flame}>Live chaos demo · interactive</GradientBadge>
-            <h2 className="mt-5 text-4xl lg:text-5xl font-semibold tracking-tight text-gradient">
+          <div className="text-center max-w-2xl mx-auto mb-16">
+            <Badge icon={Flame}>Live chaos demo · interactive</Badge>
+            <h2 className="mt-4 text-4xl lg:text-5xl font-semibold tracking-tight text-white">
               Inject a failure.<br />Watch Sentinel diagnose it.
             </h2>
-            <p className="mt-5 text-white/50 text-lg">
+            <p className="mt-4 text-white/50 text-lg leading-relaxed">
               Pick a service and a failure mode. Our AI engine will analyze, correlate, and return a root cause in seconds — right here, in your browser.
             </p>
           </div>
@@ -1392,8 +1002,7 @@ const ChaosSimulator = () => {
 
         <FadeIn delay={0.1} y={30}>
           <div className="relative max-w-6xl mx-auto">
-            <div className="absolute -inset-6 bg-gradient-to-r from-orange-500/20 via-red-500/10 to-indigo-500/20 blur-3xl rounded-full opacity-60" />
-            <div className="relative rounded-2xl glass-strong glow-border overflow-hidden shadow-[0_50px_120px_-20px_rgba(239,68,68,0.25)]">
+            <div className="relative rounded-2xl glass-strong overflow-hidden shadow-lg">
               {/* titlebar */}
               <div className="flex items-center gap-2 px-4 py-3 border-b border-white/5 bg-black/40">
                 <div className="flex gap-1.5">
@@ -1437,14 +1046,14 @@ const ChaosSimulator = () => {
                           disabled={isBusy}
                           className={`w-full text-left rounded-xl px-3.5 py-2.5 border transition-all ${
                             service === s.id
-                              ? 'border-indigo-500/40 bg-indigo-500/10 shadow-[0_0_0_1px_rgba(99,102,241,0.25),0_0_30px_-5px_rgba(99,102,241,0.5)]'
+                              ? 'border-orange-500/40 bg-orange-500/10'
                               : 'border-white/8 bg-white/[0.02] hover:bg-white/5'
                           } ${isBusy ? 'opacity-60 cursor-not-allowed' : ''}`}
                         >
                           <div className="flex items-center justify-between">
                             <span className="text-sm font-mono text-white">{s.label}</span>
                             {service === s.id && (
-                              <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 shadow-[0_0_10px_rgba(99,102,241,0.8)]" />
+                              <span className="w-1.5 h-1.5 rounded-full bg-orange-400" />
                             )}
                           </div>
                           <div className="text-xs text-white/40 mt-0.5">{s.desc}</div>
@@ -1490,7 +1099,7 @@ const ChaosSimulator = () => {
                       className={`group relative flex-1 inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl font-medium text-sm transition-all ${
                         isBusy
                           ? 'bg-white/10 text-white/50 cursor-not-allowed'
-                          : 'bg-gradient-to-r from-orange-500 to-red-500 text-white hover:shadow-[0_0_30px_rgba(239,68,68,0.5)]'
+                          : 'bg-orange-500 text-white hover:bg-orange-600'
                       }`}
                     >
                       {isBusy ? (
@@ -1522,12 +1131,12 @@ const ChaosSimulator = () => {
                 </div>
 
                 {/* RIGHT — Live feed + result */}
-                <div className="lg:col-span-7 p-6 lg:p-7 bg-gradient-to-br from-transparent to-indigo-950/10 flex flex-col gap-4">
+                <div className="lg:col-span-7 p-6 lg:p-7 flex flex-col gap-4">
                   {/* Event timeline */}
                   <div className="glass rounded-xl p-4 flex-1 min-h-[200px]">
                     <div className="flex items-center justify-between mb-3">
                       <div className="flex items-center gap-2">
-                        <Activity className="w-4 h-4 text-cyan-400" />
+                        <Activity className="w-4 h-4 text-orange-400" />
                         <span className="text-sm font-medium text-white">Live telemetry</span>
                       </div>
                       <span className="text-[11px] text-white/40 font-mono">stream</span>
@@ -1551,12 +1160,12 @@ const ChaosSimulator = () => {
                             <span
                               className={`w-1.5 h-1.5 rounded-full mt-1.5 shrink-0 ${
                                 e.type === 'inject'
-                                  ? 'bg-orange-400 shadow-[0_0_8px_rgba(249,115,22,0.8)]'
+                                  ? 'bg-orange-400'
                                   : e.type === 'signal'
-                                  ? 'bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.8)]'
+                                  ? 'bg-cyan-400'
                                   : e.type === 'ai'
-                                  ? 'bg-indigo-400 shadow-[0_0_8px_rgba(99,102,241,0.8)]'
-                                  : 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]'
+                                  ? 'bg-orange-300'
+                                  : 'bg-emerald-400'
                               }`}
                             />
                             <span className={`flex-1 ${
@@ -1579,13 +1188,12 @@ const ChaosSimulator = () => {
                         animate={{ opacity: 1, y: 0 }}
                         exit={{ opacity: 0 }}
                         transition={{ duration: 0.5, ease: 'easeOut' }}
-                        className="relative glass rounded-xl p-5 border border-indigo-500/30 overflow-hidden"
+                        className="relative glass rounded-xl p-5 border border-orange-500/30 overflow-hidden"
                       >
-                        <div className="absolute -top-10 -right-10 w-40 h-40 rounded-full bg-indigo-500/20 blur-3xl" />
                         <div className="relative">
                           <div className="flex items-start justify-between gap-4 mb-3">
                             <div className="flex items-center gap-2">
-                              <div className="w-7 h-7 rounded-md bg-gradient-to-br from-indigo-500 to-purple-500 flex items-center justify-center">
+                              <div className="w-7 h-7 rounded-md bg-orange-500 flex items-center justify-center">
                                 <Brain className="w-4 h-4 text-white" />
                               </div>
                               <div>
@@ -1605,7 +1213,7 @@ const ChaosSimulator = () => {
                           <div className="grid grid-cols-3 gap-2 mt-4">
                             <StatPill label="Impact" value={result.impact} tint="text-red-400" />
                             <StatPill label="Blast radius" value={result.blast} tint="text-orange-400" />
-                            <StatPill label="Signals" value={`${result.signals.length} correlated`} tint="text-cyan-400" />
+                            <StatPill label="Signals" value={`${result.signals.length} correlated`} tint="text-orange-400" />
                           </div>
 
                           <div className="flex flex-wrap gap-1.5 mt-3">
@@ -1620,10 +1228,10 @@ const ChaosSimulator = () => {
                           </div>
 
                           <div className="flex flex-wrap gap-2 mt-4">
-                            <button className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white text-black text-xs font-medium hover:bg-white/90">
+                            <button className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-orange-500 text-white text-xs font-medium hover:bg-orange-600">
                               Generate postmortem <ArrowRight className="w-3 h-3" />
                             </button>
-                            <button className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg glass text-white/80 text-xs font-medium hover:bg-white/10">
+                            <button className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg glass text-white/80 text-xs font-medium hover:bg-white/10">
                               Apply suggested fix
                             </button>
                           </div>
@@ -1674,217 +1282,36 @@ const StatPill = ({ label, value, tint }: StatPillProps) => (
 )
 
 /* =========================================================
-   PRICING
-   ========================================================= */
-
-const Pricing = () => {
-  const tiers = [
-    {
-      name: 'Starter',
-      icon: Rocket,
-      price: 'Free',
-      priceSub: 'forever',
-      desc: 'For small teams wiring up their first reliability loop.',
-      cta: 'Start free',
-      featured: false,
-      features: [
-        'Up to 5 engineers',
-        '1,000 incidents / month',
-        '7-day telemetry retention',
-        'AI Root Cause Analysis',
-        'Basic postmortem templates',
-        'Slack + GitHub integrations',
-        'Community support',
-      ],
-      accent: 'from-cyan-500/20 to-blue-500/20',
-      ring: 'ring-white/10',
-    },
-    {
-      name: 'Pro',
-      icon: Bolt,
-      price: '$49',
-      priceSub: 'per engineer / mo',
-      desc: 'For growing SRE teams running production at scale.',
-      cta: 'Start 14-day trial',
-      featured: true,
-      badge: 'Most popular',
-      features: [
-        'Unlimited engineers',
-        'Unlimited incidents',
-        '90-day telemetry retention',
-        'Advanced AI ensemble (GPT + Claude)',
-        'Chaos Engineering Simulator',
-        'Confidence scoring + eval dashboard',
-        'PagerDuty, Jira, Linear, Grafana',
-        'Automated postmortems',
-        'Priority support · 99.9% SLA',
-      ],
-      accent: 'from-indigo-500/30 via-purple-500/30 to-pink-500/30',
-      ring: 'ring-indigo-500/40',
-    },
-    {
-      name: 'Enterprise',
-      icon: Crown,
-      price: 'Custom',
-      priceSub: 'tailored to you',
-      desc: 'For platform orgs with complex compliance needs.',
-      cta: 'Talk to sales',
-      featured: false,
-      features: [
-        'Everything in Pro',
-        'Self-hosted / on-prem deploy',
-        'Unlimited retention',
-        'Private model fine-tuning',
-        'SSO / SAML / SCIM',
-        'SOC 2 Type II + HIPAA',
-        'Dedicated success engineer',
-        'Custom integrations',
-        '99.99% SLA + audit logs',
-      ],
-      accent: 'from-amber-500/20 to-rose-500/20',
-      ring: 'ring-white/10',
-    },
-  ]
-
-  return (
-    <section id="pricing" className="relative py-28 lg:py-36 overflow-hidden">
-      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[900px] h-[700px] rounded-full bg-indigo-900/20 blur-[150px] pointer-events-none" />
-      <div className="container mx-auto px-4 lg:px-8 relative">
-        <FadeIn>
-          <div className="text-center max-w-2xl mx-auto mb-16">
-            <GradientBadge icon={Sparkles}>Pricing</GradientBadge>
-            <h2 className="mt-5 text-4xl lg:text-5xl font-semibold tracking-tight text-gradient">
-              Simple pricing<br />that scales with reliability
-            </h2>
-            <p className="mt-5 text-white/50 text-lg">
-              Start free. Upgrade when your system demands it. No per-incident fees — ever.
-            </p>
-          </div>
-        </FadeIn>
-
-        <div className="grid md:grid-cols-3 gap-5 lg:gap-6 items-stretch">
-          {tiers.map((tier: any, i: number) => (
-            <FadeIn key={tier.name} delay={i * 0.08}>
-              <PricingCard {...tier} />
-            </FadeIn>
-          ))}
-        </div>
-
-        <FadeIn delay={0.3}>
-          <div className="mt-12 flex flex-wrap items-center justify-center gap-x-8 gap-y-2 text-xs text-white/40">
-            <span className="inline-flex items-center gap-1.5"><CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> No credit card</span>
-            <span className="inline-flex items-center gap-1.5"><CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> Cancel anytime</span>
-            <span className="inline-flex items-center gap-1.5"><CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> 14-day Pro trial</span>
-            <span className="inline-flex items-center gap-1.5"><CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> Migrate data in minutes</span>
-          </div>
-        </FadeIn>
-      </div>
-    </section>
-  )
-}
-
-interface PricingCardProps {
-  name: string;
-  icon: any;
-  price: string;
-  priceSub: string;
-  desc: string;
-  cta: string;
-  features: string[];
-  featured?: boolean;
-  badge?: string;
-  accent: string;
-  ring: string;
-}
-
-const PricingCard = ({ name, icon: Icon, price, priceSub, desc, cta, features, featured, badge, accent, ring }: PricingCardProps) => (
-  <div
-    className={`relative h-full flex flex-col rounded-2xl p-7 transition-all duration-500 hover:-translate-y-1 ${
-      featured
-        ? 'glass-strong ring-1 ring-indigo-500/40 shadow-[0_40px_100px_-20px_rgba(99,102,241,0.45)]'
-        : `glass ring-1 ${ring}`
-    } overflow-hidden`}
-  >
-    {/* background glow */}
-    <div className={`absolute -top-24 -right-24 w-64 h-64 rounded-full bg-gradient-to-br ${accent} blur-3xl ${
-      featured ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-    } transition-opacity duration-700 pointer-events-none`} />
-
-    {featured && badge && (
-      <div className="absolute top-5 right-5">
-        <span className="inline-flex items-center gap-1 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider rounded-full bg-gradient-to-r from-indigo-500 to-purple-500 text-white shadow-[0_0_20px_rgba(99,102,241,0.5)]">
-          <Sparkles className="w-3 h-3" /> {badge}
-        </span>
-      </div>
-    )}
-
-    <div className="relative flex-1 flex flex-col">
-      <div className="flex items-center gap-3 mb-5">
-        <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
-          featured
-            ? 'bg-gradient-to-br from-indigo-500 to-purple-500 shadow-[0_0_20px_rgba(99,102,241,0.4)]'
-            : 'glass'
-        }`}>
-          <Icon className={`w-4 h-4 ${featured ? 'text-white' : 'text-white/80'}`} />
-        </div>
-        <h3 className="text-xl font-semibold text-white">{name}</h3>
-      </div>
-
-      <div className="mb-4">
-        <div className="flex items-baseline gap-2">
-          <span className={`text-4xl font-semibold ${featured ? 'text-gradient-blue' : 'text-white'}`}>
-            {price}
-          </span>
-          <span className="text-sm text-white/40">· {priceSub}</span>
-        </div>
-      </div>
-
-      <p className="text-sm text-white/55 leading-relaxed mb-6">{desc}</p>
-
-      <a
-        href="#cta"
-        className={`inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-full font-medium text-sm transition-all mb-6 ${
-          featured
-            ? 'bg-white text-black hover:bg-white/90 shadow-[0_0_30px_rgba(255,255,255,0.2)]'
-            : 'glass text-white hover:bg-white/10'
-        }`}
-      >
-        {cta} <ArrowRight className="w-4 h-4" />
-      </a>
-
-      <div className="border-t border-white/5 pt-5 space-y-2.5">
-        {features.map((f: any, i: number) => (
-          <div key={i} className="flex items-start gap-2.5 text-sm">
-            <CheckCircle2 className={`w-4 h-4 shrink-0 mt-0.5 ${
-              featured ? 'text-indigo-400' : 'text-emerald-400/80'
-            }`} />
-            <span className="text-white/75 leading-relaxed">{f}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  </div>
-)
-
-/* =========================================================
    APP
    ========================================================= */
 
 const App = () => {
   return (
-    <main className="relative min-h-screen bg-black text-white selection:bg-indigo-500/30">
-      <Nav />
-      <Hero />
-      <Integrations />
-      <Features />
-      <ChaosSimulator />
-      <HowItWorks />
-      <WhySentinel />
-      <DeveloperFocus />
-      <Testimonials />
-      <Pricing />
-      <FinalCTA />
-      <Footer />
+    <main className="relative min-h-screen bg-cinematic text-white selection:bg-orange-500/30">
+      {/* Cinematic background layers */}
+      <div className="fixed inset-0 pointer-events-none z-0">
+        {/* Dot grid — telemetry matrix, most visible layer */}
+        <div className="absolute inset-0 bg-dot-grid opacity-70" />
+        {/* Film grain — cinematic texture */}
+        <div className="absolute inset-0 bg-cinematic-noise opacity-[0.08]" />
+        {/* Scanlines — retro monitoring scope */}
+        <div className="absolute inset-0 bg-cinematic-scanlines opacity-60" />
+        {/* Vignette — dark edges, draws eye inward */}
+        <div className="absolute inset-0 bg-cinematic-vignette" />
+      </div>
+
+      <div className="relative z-10">
+        <Nav />
+        <Hero />
+        <Integrations />
+        <Features />
+        <ChaosSimulator />
+        <HowItWorks />
+        <WhySentinel />
+        <DeveloperFocus />
+        <FinalCTA />
+        <Footer />
+      </div>
     </main>
   )
 }
