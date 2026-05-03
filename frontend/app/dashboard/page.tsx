@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import {   m as motion , AnimatePresence  } from 'framer-motion';
 import {
-  Activity, Brain, Shield, ArrowLeft,
+  Activity, Shield, ArrowLeft,
   Radio, Cpu, RefreshCw, AlertTriangle
 } from 'lucide-react';
 import { Incident, fetchIncidents } from '@/lib/api';
@@ -75,17 +75,11 @@ export default function Dashboard() {
                 <ArrowLeft size={16} className="text-slate-400" />
               </motion.button>
             )}
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-accent-cyan/20 to-accent-purple/20 flex items-center justify-center border border-accent-cyan/20">
-              <Brain size={18} className="text-accent-cyan" />
+            <div className="w-8 h-8 rounded-lg bg-orange-500 flex items-center justify-center">
+              <Shield size={16} className="text-white" />
             </div>
             <div>
-              <h1 className="text-base font-bold tracking-tight">
-                <span className="gradient-text">RootCause</span>
-                <span className="text-slate-400 font-normal ml-1">AI</span>
-              </h1>
-              <p className="text-[10px] text-slate-600 -mt-0.5 tracking-wider uppercase">
-                Intelligent Incident Analyzer
-              </p>
+              <span className="font-semibold tracking-tight text-white">Sentinel-SRE</span>
             </div>
           </div>
 
@@ -254,8 +248,8 @@ export default function Dashboard() {
       {/* Footer */}
       <footer className="border-t border-white/[0.04] mt-12">
         <div className="max-w-[1600px] mx-auto px-6 py-4 flex items-center justify-between text-xs text-slate-600">
-          <span>RootCause AI v0.1.0 — Built with FastAPI + ChromaDB + Groq</span>
-          <span>© 2026 AI Root Cause Analyzer</span>
+          <span>Sentinel-SRE v0.1.0 — Built with FastAPI + ChromaDB + Groq</span>
+          <span>© 2026 Sentinel-SRE</span>
         </div>
       </footer>
     </div>

@@ -63,13 +63,13 @@ export default function RegisterPage() {
         >
           <div className="glass-strong glow-border rounded-2xl p-8 shadow-[0_40px_100px_-30px_rgba(16,185,129,0.3)]" data-testid="register-success-panel">
             <div className="flex items-center gap-2 mb-6">
-              <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-emerald-500 to-teal-500 flex items-center justify-center shadow-[0_0_20px_rgba(16,185,129,0.5)]">
+              <div className="w-8 h-8 rounded-lg bg-orange-500 flex items-center justify-center">
                 <KeyRound className="w-4 h-4 text-white" />
               </div>
               <span className="font-semibold tracking-tight">Your tenant is ready</span>
             </div>
 
-            <h1 className="text-2xl font-semibold tracking-tight text-gradient">Save your webhook token</h1>
+            <h1 className="text-2xl font-semibold tracking-tight text-white">Save your webhook token</h1>
             <p className="mt-1.5 text-sm text-white/55">
               This is your <strong className="text-white">private Prometheus / Alertmanager ingestion token</strong>. It&apos;s shown <em>once</em> and stored on our side only as a hash — we can&apos;t recover it later.
             </p>
@@ -128,13 +128,13 @@ export default function RegisterPage() {
       >
         <div className="glass-strong glow-border rounded-2xl p-8 shadow-[0_40px_100px_-30px_rgba(168,85,247,0.4)]">
           <Link href="/" className="flex items-center gap-2 mb-8 group w-fit">
-            <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 flex items-center justify-center shadow-[0_0_20px_rgba(99,102,241,0.5)]">
+            <div className="w-8 h-8 rounded-lg bg-orange-500 flex items-center justify-center">
               <Shield className="w-4 h-4 text-white" />
             </div>
             <span className="font-semibold tracking-tight">Sentinel-SRE</span>
           </Link>
 
-          <h1 className="text-2xl font-semibold tracking-tight text-gradient">Create your workspace</h1>
+          <h1 className="text-2xl font-semibold tracking-tight text-white">Create your workspace</h1>
           <p className="mt-1.5 text-sm text-white/50">Isolated tenant · your own RAG memory · your own webhook.</p>
 
           <form onSubmit={onSubmit} className="mt-7 space-y-4" data-testid="register-form">

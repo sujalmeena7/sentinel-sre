@@ -1,0 +1,27 @@
+groups:
+  - name: demo-alerts
+    rules:
+      # This alert always fires (1 > 0 is always true)
+      # Perfect for testing Sentinel without real incidents
+      - alert: TestAlert
+        expr: 1 > 0
+        for: 10s
+        labels:
+          severity: critical
+          service: checkout-ui
+          environment: production
+        annotations:
+          summary: "Test alert for Sentinel SRE"
+          description: "This is a test alert to verify Sentinel ingestion works."
+
+      # Real memory alert (requires node_exporter)
+      # Uncomment once you have real metrics flowing
+      # - alert: HighMemoryUsage
+      #   expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) > 0.9
+      #   for: 2m
+      #   labels:
+      #     severity: warning
+      #     service: api-gateway
+      #   annotations:
+      #     summary: "High memory usage detected"
+      #     description: "Memory usage is above 90% for more than 2 minutes."

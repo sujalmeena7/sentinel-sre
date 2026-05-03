@@ -45,13 +45,13 @@ export default function LoginPage() {
       >
         <div className="glass-strong glow-border rounded-2xl p-8 shadow-[0_40px_100px_-30px_rgba(99,102,241,0.4)]">
           <Link href="/" className="flex items-center gap-2 mb-8 group w-fit">
-            <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 flex items-center justify-center shadow-[0_0_20px_rgba(99,102,241,0.5)]">
+            <div className="w-8 h-8 rounded-lg bg-orange-500 flex items-center justify-center">
               <Shield className="w-4 h-4 text-white" />
             </div>
             <span className="font-semibold tracking-tight">Sentinel-SRE</span>
           </Link>
 
-          <h1 className="text-2xl font-semibold tracking-tight text-gradient">Welcome back</h1>
+          <h1 className="text-2xl font-semibold tracking-tight text-white">Welcome back</h1>
           <p className="mt-1.5 text-sm text-white/50">Sign in to your Incident Command Center.</p>
 
           <form onSubmit={onSubmit} className="mt-7 space-y-4" data-testid="login-form">
