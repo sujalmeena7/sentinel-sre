@@ -15,7 +15,6 @@ import {
   AlertTriangle,
   CheckCircle2,
   Shield,
-  Code2,
   Terminal,
   Sparkles,
   Cpu,
@@ -120,7 +119,6 @@ const Nav = () => {
     { label: 'Features', href: '#features' },
     { label: 'Chaos Demo', href: '#chaos' },
     { label: 'How it works', href: '#how' },
-    { label: 'Developers', href: '#developers' },
   ]
 
   return (
@@ -308,10 +306,8 @@ const ConfidenceBadge = ({ value }: ConfidenceBadgeProps) => {
   )
 }
 
-
-/* =========================================================
-   FEATURES
-   ========================================================= */
+//FEATURES
+ 
 
 const Features = () => {
   const features = [
@@ -546,106 +542,6 @@ const WhySentinel = () => {
     </section>
   )
 }
-
-/* =========================================================
-   DEVELOPER FOCUS
-   ========================================================= */
-
-const DeveloperFocus = () => {
-  return (
-    <section id="developers" className="relative py-24 lg:py-32">
-      <div className="container mx-auto px-4 lg:px-8">
-        <div className="grid lg:grid-cols-2 gap-12 lg:gap-16 items-center">
-          <FadeIn>
-            <div>
-              <Badge icon={Code2}>Built for engineers</Badge>
-              <h2 className="mt-4 text-4xl lg:text-5xl font-semibold tracking-tight text-white">
-                Wire it up in<br />under a minute
-              </h2>
-              <p className="mt-4 text-white/55 text-lg leading-relaxed">
-                A clean API, typed SDKs, and zero-config OpenTelemetry support. Sentinel
-                fits the way you already ship code.
-              </p>
-              <div className="mt-6 space-y-3">
-                {[
-                  'TypeScript, Go, Python, and Rust SDKs',
-                  'OpenTelemetry-native — drop-in collector',
-                  'Webhooks for PagerDuty, Slack, Linear, Jira',
-                  'Terraform provider for infra-as-code setups',
-                ].map((item: any) => (
-                  <div key={item} className="flex items-center gap-3 text-sm text-white/70">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                    {item}
-                  </div>
-                ))}
-              </div>
-              <div className="mt-6 flex flex-wrap gap-3">
-                <Button variant="secondary" href="#" icon={Github}>
-                  Read the docs
-                </Button>
-              </div>
-            </div>
-          </FadeIn>
-
-          <FadeIn delay={0.2} y={40}>
-            <CodeBlock />
-          </FadeIn>
-        </div>
-      </div>
-    </section>
-  )
-}
-
-const CodeBlock = () => {
-  const lines = [
-    { t: '// Instrument in seconds. Ship resilient.', c: 'text-white/30' },
-    { t: 'import { Sentinel } from "@sentinel-sre/sdk";', c: 'text-pink-300' },
-    { t: '', c: '' },
-    { t: 'const sentinel = new Sentinel({', c: 'text-white/80' },
-    { t: '  apiKey: process.env.SENTINEL_API_KEY,', c: 'text-white/80' },
-    { t: '  service: "checkout-api",', c: 'text-white/80' },
-    { t: '  env: "production",', c: 'text-white/80' },
-    { t: '});', c: 'text-white/80' },
-    { t: '', c: '' },
-    { t: '// Report anomalies — or let auto-detect do it', c: 'text-white/30' },
-    { t: 'await sentinel.incident.create({', c: 'text-cyan-300' },
-    { t: '  title: "5xx spike on /checkout",', c: 'text-emerald-300' },
-    { t: '  severity: "critical",', c: 'text-emerald-300' },
-    { t: '  signals: await collectSignals(),', c: 'text-emerald-300' },
-    { t: '});', c: 'text-cyan-300' },
-    { t: '', c: '' },
-    { t: '// → AI RCA generated in 2.1s ✓', c: 'text-emerald-400/80' },
-  ]
-
-  return (
-    <div className="relative">
-      <div className="relative rounded-2xl glass-strong overflow-hidden shadow-lg">
-        <div className="flex items-center gap-2 px-4 py-3 border-b border-white/5 bg-black/40">
-          <div className="flex gap-1.5">
-            <div className="w-2.5 h-2.5 rounded-full bg-red-500/80" />
-            <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/80" />
-            <div className="w-2.5 h-2.5 rounded-full bg-green-500/80" />
-          </div>
-          <div className="flex items-center gap-1.5 text-xs text-white/50 font-mono ml-3">
-            <Terminal className="w-3 h-3" />
-            app.ts
-          </div>
-        </div>
-        <pre className="p-5 text-[13px] leading-relaxed font-mono overflow-x-auto">
-          <code>
-            {lines.map((l, i) => (
-              <div key={i} className="flex gap-4">
-                <span className="text-white/20 select-none w-5 text-right">{i + 1}</span>
-                <span className={l.c}>{l.t || '\u00A0'}</span>
-              </div>
-            ))}
-          </code>
-        </pre>
-      </div>
-    </div>
-  )
-}
-
 
 /* =========================================================
    FINAL CTA
@@ -1359,7 +1255,6 @@ const App = () => {
         <ChaosSimulator />
         <HowItWorks />
         <WhySentinel />
-        <DeveloperFocus />
         <FinalCTA />
         <Footer />
       </div>
