@@ -2,7 +2,8 @@ import React, { useState } from 'react';
 import { Radio, Copy, Check, ExternalLink, RefreshCw } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const RAW_BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || '').trim().replace(/\/+$/, '');
+const API_URL = RAW_BACKEND_URL || 'http://localhost:8000';
 
 export default function TelemetryPanel() {
   const [copied, setCopied] = useState(false);
