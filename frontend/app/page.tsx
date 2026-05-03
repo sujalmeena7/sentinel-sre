@@ -556,22 +556,22 @@ const FinalCTA = () => {
           <div className="relative rounded-3xl glass-strong p-8 lg:p-16 text-center">
             <div className="relative">
               <Badge icon={Sparkles}>Ready to ship resilience</Badge>
-              <h2 className="mt-4 text-4xl lg:text-6xl font-semibold tracking-tight text-white max-w-3xl mx-auto">
-                Start building resilient<br />systems today
+              <h2 className="mt-4 text-3xl sm:text-4xl lg:text-6xl font-semibold tracking-tight text-white max-w-3xl mx-auto">
+                Start building resilient<br className="hidden sm:block" /> systems today
               </h2>
-              <p className="mt-4 text-white/60 text-lg max-w-xl mx-auto leading-relaxed">
+              <p className="mt-4 text-white/60 text-base sm:text-lg max-w-xl mx-auto leading-relaxed px-2 sm:px-0">
                 Deploy Sentinel-SRE in minutes. Watch incidents resolve themselves.
               </p>
-              <div className="mt-8 flex flex-wrap items-center justify-center gap-4">
-                <Button variant="primary" href="/dashboard" icon={ArrowRight}>
-                  Launch Dashboard
+              <div className="mt-8 flex flex-col sm:flex-row flex-wrap items-center justify-center gap-4">
+                <Button variant="primary" href="/register" icon={ArrowRight}>
+                  Get Started Free
                 </Button>
-                <Button variant="secondary" href="#" icon={Github}>
-                  Star on GitHub
+                <Button variant="secondary" href="/dashboard" icon={ArrowRight}>
+                  Launch Dashboard
                 </Button>
               </div>
               <div className="mt-6 text-xs text-white/40">
-                Free for teams under 5 · No credit card
+                Open source · Self-hostable · No limits
               </div>
             </div>
           </div>
@@ -589,8 +589,9 @@ const Footer = () => {
   return (
     <footer className="relative pt-16 pb-10 border-t border-white/5">
       <div className="container mx-auto px-4 lg:px-8">
-        <div className="grid md:grid-cols-5 gap-10">
-          <div className="md:col-span-2">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-10">
+          {/* Brand */}
+          <div className="sm:col-span-2 lg:col-span-2">
             <div className="flex items-center gap-2 mb-4">
               <div className="w-8 h-8 rounded-lg bg-orange-500 flex items-center justify-center">
                 <Shield className="w-4 h-4 text-white" />
@@ -601,62 +602,91 @@ const Footer = () => {
               AI-powered root cause analysis and automated postmortems for modern systems.
             </p>
             <div className="mt-4 flex items-center gap-3">
-              <a href="#" className="w-9 h-9 rounded-lg glass flex items-center justify-center hover:bg-white/10 transition-colors">
+              <a
+                href="https://github.com/sujalmeena7/sentinel-sre"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-9 h-9 rounded-lg glass flex items-center justify-center hover:bg-white/10 transition-colors"
+              >
                 <Github className="w-4 h-4 text-white/70" />
               </a>
             </div>
           </div>
 
-          <FooterCol
-            title="Product"
-            links={['Features', 'How it works', 'Changelog', 'Roadmap']}
-          />
-          <FooterCol
-            title="Developers"
-            links={['Docs', 'API reference', 'SDKs', 'Status', 'GitHub']}
-          />
-          <FooterCol
-            title="Company"
-            links={['About', 'Blog', 'Careers', 'Security', 'Contact']}
-          />
+          {/* Product */}
+          <div>
+            <h4 className="text-sm font-semibold text-white mb-4">Product</h4>
+            <ul className="space-y-2.5">
+              <li>
+                <a href="#features" className="text-sm text-white/50 hover:text-white transition-colors">
+                  Features
+                </a>
+              </li>
+              <li>
+                <a href="#how" className="text-sm text-white/50 hover:text-white transition-colors">
+                  How it works
+                </a>
+              </li>
+              <li>
+                <a href="#integrations" className="text-sm text-white/50 hover:text-white transition-colors">
+                  Integrations
+                </a>
+              </li>
+              <li>
+                <a href="#chaos" className="text-sm text-white/50 hover:text-white transition-colors">
+                  Chaos Demo
+                </a>
+              </li>
+            </ul>
+          </div>
+
+          {/* App */}
+          <div>
+            <h4 className="text-sm font-semibold text-white mb-4">App</h4>
+            <ul className="space-y-2.5">
+              <li>
+                <a href="/register" className="text-sm text-white/50 hover:text-white transition-colors">
+                  Get Started
+                </a>
+              </li>
+              <li>
+                <a href="/login" className="text-sm text-white/50 hover:text-white transition-colors">
+                  Sign in
+                </a>
+              </li>
+              <li>
+                <a href="/dashboard" className="text-sm text-white/50 hover:text-white transition-colors">
+                  Dashboard
+                </a>
+              </li>
+              <li>
+                <a
+                  href="https://github.com/sujalmeena7/sentinel-sre"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-sm text-white/50 hover:text-white transition-colors"
+                >
+                  GitHub
+                </a>
+              </li>
+            </ul>
+          </div>
         </div>
 
-        <div className="mt-14 pt-6 border-t border-white/5 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <div className="mt-14 pt-6 border-t border-white/5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <p className="text-xs text-white/40">
-            2025 Sentinel-SRE · Built with Next.js, Tailwind, and Framer Motion
+            2026 Sentinel-SRE · Built with Next.js, Tailwind, and Framer Motion
           </p>
           <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-white/40">
-            <span>Crafted by the Sentinel team</span>
+            <span>Open source</span>
             <span className="w-1 h-1 rounded-full bg-white/20" />
-            <span>Privacy</span>
-            <span>Terms</span>
-            <span>Security</span>
+            <span>Self-hosted</span>
           </div>
         </div>
       </div>
     </footer>
   )
 }
-
-interface FooterColProps {
-  title: string;
-  links: string[];
-}
-
-const FooterCol = ({ title, links }: FooterColProps) => (
-  <div>
-    <h4 className="text-sm font-semibold text-white mb-4">{title}</h4>
-    <ul className="space-y-2.5">
-      {links.map((l) => (
-        <li key={l}>
-          <a href="#" className="text-sm text-white/50 hover:text-white transition-colors">
-            {l}
-          </a>
-        </li>
-      ))}
-    </ul>
-  </div>
-)
 
 /* =========================================================
    INTEGRATIONS — Real Prometheus Webhook
