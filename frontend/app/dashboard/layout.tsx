@@ -18,7 +18,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         <header className="relative z-20 border-b border-white/5 bg-black/40 backdrop-blur-md">
           <div className="mx-auto max-w-[1600px] px-4 md:px-6 lg:px-8 flex items-center justify-between h-14">
             <Link href="/" className="flex items-center gap-2" data-testid="dashboard-brand-link">
-              <div className="w-7 h-7 rounded-md bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 flex items-center justify-center shadow-[0_0_14px_rgba(99,102,241,0.5)]">
+              <div className="w-7 h-7 rounded-md bg-orange-500 flex items-center justify-center">
                 <Shield className="w-3.5 h-3.5 text-white" />
               </div>
               <span className="font-semibold text-sm tracking-tight text-white">Sentinel-SRE</span>
