@@ -36,6 +36,7 @@ import {
   Copy,
   FileCode,
 } from 'lucide-react'
+import HeroSection from '@/components/HeroSection'
 
 /* =========================================================
    Reusable bits
@@ -1234,7 +1235,7 @@ const StatPill = ({ label, value, tint }: StatPillProps) => (
 
 const App = () => {
   return (
-    <main className="relative min-h-screen bg-cinematic text-white selection:bg-orange-500/30">
+    <main className="relative min-h-screen bg-black text-white selection:bg-orange-500/30">
       {/* Cinematic background layers */}
       <div className="fixed inset-0 pointer-events-none z-0">
         {/* Dot grid — telemetry matrix, most visible layer */}
@@ -1248,8 +1249,7 @@ const App = () => {
       </div>
 
       <div className="relative z-10">
-        <Nav />
-        <Hero />
+        <HeroSection />
         <Integrations />
         <Features />
         <ChaosSimulator />
