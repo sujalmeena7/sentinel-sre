@@ -33,6 +33,9 @@ import {
   MemoryStick,
   ServerCrash,
   Plug,
+  Check,
+  Copy,
+  FileCode,
 } from 'lucide-react'
 
 /* =========================================================
@@ -759,86 +762,134 @@ const FooterCol = ({ title, links }: FooterColProps) => (
 )
 
 /* =========================================================
-   INTEGRATIONS
+   INTEGRATIONS — Real Prometheus Webhook
    ========================================================= */
 
+const WEBHOOK_BASE = process.env.NEXT_PUBLIC_BACKEND_URL
+  ? process.env.NEXT_PUBLIC_BACKEND_URL.replace(/\/+$/, '')
+  : 'https://sentinel-backend-box9.onrender.com'
+
 const Integrations = () => {
-  const integrations = [
-    { name: 'Prometheus', color: '#E6522C', tag: 'Metrics' },
-    { name: 'OpenTelemetry', color: '#F5A800', tag: 'Tracing' },
-    { name: 'Grafana', color: '#F46800', tag: 'Dashboards' },
-    { name: 'Datadog', color: '#632CA6', tag: 'Observability' },
-    { name: 'Loki', color: '#FFD700', tag: 'Logs' },
-    { name: 'Jaeger', color: '#60D0E4', tag: 'Tracing' },
-    { name: 'Kubernetes', color: '#326CE5', tag: 'Orchestration' },
-    { name: 'AWS CloudWatch', color: '#FF9900', tag: 'Cloud' },
-    { name: 'PagerDuty', color: '#06AC38', tag: 'Alerts' },
-    { name: 'Slack', color: '#E01E5A', tag: 'Comms' },
-    { name: 'GitHub', color: '#FFFFFF', tag: 'Source' },
-    { name: 'Elasticsearch', color: '#00BFB3', tag: 'Search' },
-  ]
+  const [copied, setCopied] = useState<string | null>(null)
+  const webhookUrl = `${WEBHOOK_BASE}/api/v1/telemetry/prometheus/{your-webhook-token}`
+
+  const copy = (text: string, key: string) => {
+    navigator.clipboard.writeText(text)
+    setCopied(key)
+    setTimeout(() => setCopied(null), 2000)
+  }
+
+  const alertmanagerYaml = `route:
+  receiver: sentinel-sre
+
+receivers:
+  - name: sentinel-sre
+    webhook_configs:
+      - url: "${webhookUrl}"
+        send_resolved: true`
+
+  const curlCommand = `curl -X POST ${webhookUrl} \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "receiver": "webhook",
+    "status": "firing",
+    "alerts": [{
+      "status": "firing",
+      "labels": {
+        "alertname": "HighMemoryUsage",
+        "service": "checkout-ui",
+        "severity": "critical"
+      }
+    }]
+  }'`
 
   return (
     <section id="integrations" className="relative py-24 lg:py-32">
-      <div className="absolute inset-0 bg-[#0a0e1a] pointer-events-none" />
       <div className="container mx-auto px-4 lg:px-8 relative">
         <FadeIn>
           <div className="text-center max-w-2xl mx-auto mb-16">
             <Badge icon={Plug}>Integrations</Badge>
             <h2 className="mt-4 text-4xl lg:text-5xl font-semibold tracking-tight text-white">
-              Plugs into every<br />tool your team already uses
+              One webhook.<br />Any alert source.
             </h2>
             <p className="mt-4 text-white/50 text-lg leading-relaxed">
-              Bring your own stack. Sentinel-SRE reasons across logs, metrics, traces, and alerts — wherever they live.
+              Sentinel-SRE ingests alerts via a single Prometheus-compatible webhook. No agents. No sidecars.
             </p>
           </div>
         </FadeIn>
 
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-          {integrations.map((tool: any, i: number) => (
-            <FadeIn key={tool.name} delay={i * 0.03}>
-              <IntegrationCard {...tool} />
-            </FadeIn>
-          ))}
-        </div>
+        <div className="max-w-3xl mx-auto space-y-6">
+          {/* Webhook URL */}
+          <FadeIn>
+            <div className="rounded-2xl glass p-6">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <Radio className="w-4 h-4 text-orange-400" />
+                  <h3 className="text-sm font-semibold text-white">Webhook Endpoint</h3>
+                </div>
+                <button
+                  onClick={() => copy(webhookUrl, 'url')}
+                  className="flex items-center gap-1 text-xs text-orange-400 hover:text-orange-300 transition-colors"
+                >
+                  {copied === 'url' ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                  {copied === 'url' ? 'Copied' : 'Copy'}
+                </button>
+              </div>
+              <code className="block bg-black/40 rounded-lg px-3 py-2.5 text-xs font-mono text-white/70 break-all">
+                {webhookUrl}
+              </code>
+              <p className="mt-2 text-xs text-white/40">
+                Replace <code className="text-white/60">{'{your-webhook-token}'}</code> with your personal token from the dashboard.
+              </p>
+            </div>
+          </FadeIn>
 
-        <FadeIn delay={0.3}>
-          <div className="mt-8 text-center text-sm text-white/40">
-            ...and 40+ more via our open API.{' '}
-            <a href="#developers" className="text-white/80 hover:text-white underline underline-offset-4">
-              See the full list →
-            </a>
-          </div>
-        </FadeIn>
+          {/* Alertmanager config */}
+          <FadeIn delay={0.05}>
+            <div className="rounded-2xl glass p-6">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <FileCode className="w-4 h-4 text-emerald-400" />
+                  <h3 className="text-sm font-semibold text-white">Alertmanager Config</h3>
+                </div>
+                <button
+                  onClick={() => copy(alertmanagerYaml, 'yaml')}
+                  className="flex items-center gap-1 text-xs text-orange-400 hover:text-orange-300 transition-colors"
+                >
+                  {copied === 'yaml' ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                  {copied === 'yaml' ? 'Copied' : 'Copy'}
+                </button>
+              </div>
+              <pre className="bg-black/40 rounded-lg px-3 py-2.5 text-[11px] font-mono text-white/70 overflow-x-auto">
+                <code>{alertmanagerYaml}</code>
+              </pre>
+            </div>
+          </FadeIn>
+
+          {/* Test cURL */}
+          <FadeIn delay={0.1}>
+            <div className="rounded-2xl glass p-6">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <Terminal className="w-4 h-4 text-cyan-400" />
+                  <h3 className="text-sm font-semibold text-white">Test with cURL</h3>
+                </div>
+                <button
+                  onClick={() => copy(curlCommand, 'curl')}
+                  className="flex items-center gap-1 text-xs text-orange-400 hover:text-orange-300 transition-colors"
+                >
+                  {copied === 'curl' ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                  {copied === 'curl' ? 'Copied' : 'Copy'}
+                </button>
+              </div>
+              <pre className="bg-black/40 rounded-lg px-3 py-2.5 text-[11px] font-mono text-white/70 overflow-x-auto">
+                <code>{curlCommand}</code>
+              </pre>
+            </div>
+          </FadeIn>
+        </div>
       </div>
     </section>
-  )
-}
-
-interface IntegrationCardProps {
-  name: string;
-  color: string;
-  tag: string;
-}
-
-const IntegrationCard = ({ name, color, tag }: IntegrationCardProps) => {
-  const initials = name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
-  return (
-    <div className="group relative rounded-2xl glass p-5 h-full flex items-center gap-4 overflow-hidden hover:border-white/15 transition-all duration-500 hover:-translate-y-0.5">
-      <div className="relative w-11 h-11 rounded-xl glass flex items-center justify-center shrink-0 border border-white/10 group-hover:scale-110 transition-transform duration-500">
-        <span
-          className="text-sm font-bold"
-          style={{ color }}
-        >
-          {initials}
-        </span>
-      </div>
-      <div className="relative min-w-0">
-        <div className="text-sm font-semibold text-white truncate">{name}</div>
-        <div className="text-[11px] text-white/40 mt-0.5 uppercase tracking-wider">{tag}</div>
-      </div>
-      <CheckCircle2 className="relative ml-auto w-4 h-4 text-emerald-400/70 shrink-0" />
-    </div>
   )
 }
 
