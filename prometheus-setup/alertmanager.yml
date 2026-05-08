@@ -1,7 +1,3 @@
-# ============================================================
-#  Replace YOUR_WEBHOOK_TOKEN with your actual token from
-#  the Sentinel Dashboard > Live Telemetry Ingestion panel
-# ============================================================
 
 route:
   receiver: sentinel-sre
@@ -9,5 +5,5 @@ route:
 receivers:
   - name: sentinel-sre
     webhook_configs:
-      - url: "https://sentinel-backend-box9.onrender.com/api/v1/telemetry/prometheus/YOUR_WEBHOOK_TOKEN"
+      - url: "https://sentinel-backend-box9.onrender.com/api/v1/telemetry/prometheus/CEOTOkoIjB8w4Asv7CehOFcrE6vs9J_ZlXbV95Bd4d8"
         send_resolved: true

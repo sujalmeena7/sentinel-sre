@@ -1,12 +1,30 @@
-# Sentinel-SRE 🛡️
-### AI-Powered Root Cause Analysis for Modern Infrastructure
+<div align="center">
+  <img src="https://img.icons8.com/fluency/96/shield.png" alt="Sentinel Logo" width="80" />
+  <h1>Sentinel-SRE</h1>
+  <p><b>AI-Powered Root Cause Analysis for Modern Infrastructure</b></p>
 
-[![Next.js](https://img.shields.io/badge/Next.js-14-black?logo=next.js)](https://nextjs.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.110-009688?logo=fastapi)](https://fastapi.tiangolo.com/)
-[![ChromaDB](https://img.shields.io/badge/Vector_DB-ChromaDB-blue)](https://www.trychroma.com/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+  <p>
+    <img src="https://img.shields.io/badge/Next.js-14-000000?style=flat-square&logo=next.js&logoColor=white" alt="Next.js 14" />
+    <img src="https://img.shields.io/badge/FastAPI-0.110-009688?style=flat-square&logo=fastapi&logoColor=white" alt="FastAPI" />
+    <img src="https://img.shields.io/badge/Vector_DB-ChromaDB-blue?style=flat-square" alt="ChromaDB" />
+    <img src="https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square" alt="License MIT" />
+  </p>
 
-**Sentinel-SRE** is a next-generation incident management platform designed to transform how engineering teams handle system failures. By unifying deterministic SRE rules with real-time statistical anomaly detection and a feedback-aware RAG (Retrieval-Augmented Generation) pipeline, Sentinel-SRE doesn't just monitor—it reasons.
+  <p><b>Sentinel-SRE</b> is a next-generation incident management platform designed to transform how engineering teams handle system failures. By unifying deterministic SRE rules with real-time statistical anomaly detection and a feedback-aware RAG pipeline, Sentinel-SRE doesn't just monitor—it reasons.</p>
+</div>
+
+---
+
+## Table of Contents
+
+---
+
+- [🏗️ System Architecture](#️-system-architecture)
+- [🚀 Key Features](#-key-features)
+- [🛠️ Technology Stack](#️-technology-stack)
+- [📦 Getting Started](#-getting-started)
+- [🌐 Production Deployment](#-production-deployment)
+- [📄 License](#-license)
 
 ---
 
