@@ -88,6 +88,19 @@ def parse_dt(val: Optional[str]) -> Optional[datetime]:
     return None
 
 
+def _require_owned_incident(session: Session, incident_id: str, current_user: User) -> Incident:
+    """Fetch an incident and enforce that the current user owns it.
+
+    Returns 404 (not 403) so we don't leak existence of other tenants' incidents.
+    Rejects orphan rows (user_id is None) defensively, in case any path ever
+    forgot to set the owner.
+    """
+    incident = session.get(Incident, incident_id)
+    if not incident or incident.user_id is None or incident.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    return incident
+
+
 def launch_background(func, *args, **kwargs) -> None:
     """Run work in a detached daemon thread from sync or async routes safely."""
     thread = threading.Thread(target=func, args=args, kwargs=kwargs, daemon=True)
@@ -253,7 +266,9 @@ def read_me(current_user: User = Depends(get_current_user)):
 
 
 @app.post("/api/v1/auth/rotate-webhook-token", response_model=AuthResponse)
+@limiter.limit("5/minute")
 def rotate_webhook_token(
+    request: Request,
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
@@ -275,7 +290,9 @@ def process_incident_background(incident: dict):
 
 
 @app.post("/api/v1/incidents/ingest", response_model=Dict[str, Any])
+@limiter.limit("60/minute")
 def ingest_incident(
+    request: Request,
     payload: IncidentIngest,
     background_tasks: BackgroundTasks,
     session: Session = Depends(get_session),
@@ -543,16 +560,16 @@ def analyze_anomaly_get():
 
 
 @app.post("/api/v1/incidents/analyze")
+@limiter.limit("20/minute")
 def analyze_anomaly(
+    request: Request,
     req: AnalyzeRequest,
     background_tasks: BackgroundTasks,
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
     """NON-BLOCKING analyze endpoint - returns instantly. Heavy pipeline runs in background."""
-    incident = session.get(Incident, req.incident_id)
-    if not incident or (incident.user_id and incident.user_id != current_user.id):
-        raise HTTPException(status_code=404, detail="Incident not found")
+    incident = _require_owned_incident(session, req.incident_id, current_user)
 
     if incident.analysis_status == "processing":
         return {
@@ -596,7 +613,7 @@ def get_analyze_status(
 ):
     """Polling endpoint for background analysis status."""
     incident = session.get(Incident, task_id)
-    if not incident or (incident.user_id and incident.user_id != current_user.id):
+    if not incident or incident.user_id is None or incident.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Task not found")
         
     return {
@@ -614,10 +631,7 @@ def get_incident(
     current_user: User = Depends(get_current_user),
 ):
     """Fetch a single incident - used by the frontend to poll analysis_status / analysis_result."""
-    incident = session.get(Incident, incident_id)
-    if not incident or (incident.user_id and incident.user_id != current_user.id):
-        raise HTTPException(status_code=404, detail="Incident not found")
-    return incident
+    return _require_owned_incident(session, incident_id, current_user)
 
 
 class FeedbackRequest(BaseModel):
@@ -632,16 +646,15 @@ class DispatchRequest(BaseModel):
 
 
 @app.post("/api/v1/incidents/feedback")
+@limiter.limit("30/minute")
 def submit_feedback(
+    request: Request,
     req: FeedbackRequest,
     background_tasks: BackgroundTasks,
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
-    from fastapi import HTTPException
-    incident = session.get(Incident, req.incident_id)
-    if not incident or (incident.user_id and incident.user_id != current_user.id):
-        raise HTTPException(status_code=404, detail="Incident not found")
+    incident = _require_owned_incident(session, req.incident_id, current_user)
 
     if incident.human_feedback_score is None:
         incident.human_feedback_score = 0
@@ -670,7 +683,9 @@ class SimulationRequest(BaseModel):
 
 
 @app.post("/api/v1/simulation/trigger")
+@limiter.limit("30/minute")
 def trigger_simulation(
+    request: Request,
     req: SimulationRequest,
     background_tasks: BackgroundTasks,
     session: Session = Depends(get_session),
@@ -1131,15 +1146,15 @@ Constraints:
 
 
 @app.post("/api/v1/incidents/{incident_id}/postmortem")
+@limiter.limit("10/minute")
 async def generate_postmortem(
+    request: Request,
     incident_id: str,
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
     import traceback
-    incident = session.get(Incident, incident_id)
-    if not incident or (incident.user_id and incident.user_id != current_user.id):
-        raise HTTPException(status_code=404, detail="Incident not found")
+    _require_owned_incident(session, incident_id, current_user)
     try:
         markdown = await _generate_postmortem_markdown(incident_id, session)
         return {"postmortem": markdown}
@@ -1151,15 +1166,15 @@ async def generate_postmortem(
 
 
 @app.post("/api/v1/incidents/{incident_id}/dispatch")
+@limiter.limit("10/minute")
 async def dispatch_postmortem(
+    request: Request,
     incident_id: str,
     req: DispatchRequest,
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
-    incident = session.get(Incident, incident_id)
-    if not incident or (incident.user_id and incident.user_id != current_user.id):
-        raise HTTPException(status_code=404, detail="Incident not found")
+    incident = _require_owned_incident(session, incident_id, current_user)
 
     destination = (req.destination or "").strip().lower()
     if destination not in {"slack", "teams"}:
@@ -1288,6 +1303,7 @@ def process_slack_action(payload: dict):
 
 
 @app.post("/api/v1/slack/interactive")
+@limiter.limit("60/minute")
 async def slack_interactive(
     request: Request,
     background_tasks: BackgroundTasks
@@ -1331,14 +1347,14 @@ class SimulateSlackAction(BaseModel):
 
 
 @app.post("/api/v1/slack/simulate")
+@limiter.limit("30/minute")
 def simulate_slack_action(
+    request: Request,
     req: SimulateSlackAction,
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
-    incident = session.get(Incident, req.incident_id)
-    if not incident or (incident.user_id and incident.user_id != current_user.id):
-        raise HTTPException(status_code=404, detail="Incident not found")
+    incident = _require_owned_incident(session, req.incident_id, current_user)
 
     now = datetime.now(timezone.utc)
 

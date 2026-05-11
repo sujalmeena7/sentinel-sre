@@ -13,6 +13,7 @@ Provides:
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import secrets
 from datetime import datetime, timedelta, timezone
@@ -27,17 +28,33 @@ from sqlmodel import Session, select
 from database import get_session
 from models import User
 
+logger = logging.getLogger(__name__)
+
 # ─── Configuration ───────────────────────────────────────────────────
 JWT_ALGORITHM = "HS256"
 ACCESS_TOKEN_TTL_MIN = int(os.getenv("ACCESS_TOKEN_TTL_MIN", "1440"))  # 24h default
 
+_JWT_FALLBACK_WARNED = False
+
 
 def _jwt_secret() -> str:
-    """Read JWT secret from env. Fail fast if missing in production."""
+    """Read JWT secret from env. Refuse to start with a dev secret in production."""
+    global _JWT_FALLBACK_WARNED
     secret = os.getenv("JWT_SECRET")
     if not secret:
-        # Fall back to a dev-only secret so local runs work out of the box.
-        # Render deploys MUST set JWT_SECRET.
+        # In production environments, refuse to issue tokens with a predictable secret.
+        env = os.getenv("APP_ENV", "").lower() or os.getenv("ENV", "").lower()
+        if env in {"production", "prod"} or os.getenv("RENDER") or os.getenv("VERCEL"):
+            raise RuntimeError(
+                "JWT_SECRET is not set in a production environment. "
+                "Refusing to issue tokens with a predictable dev secret."
+            )
+        if not _JWT_FALLBACK_WARNED:
+            logger.warning(
+                "JWT_SECRET is not set — falling back to an INSECURE dev secret. "
+                "Set JWT_SECRET in your environment for any non-local use."
+            )
+            _JWT_FALLBACK_WARNED = True
         secret = "DEV-ONLY-INSECURE-REPLACE-IN-PRODUCTION-" + hashlib.sha256(
             b"sentinel-sre-dev"
         ).hexdigest()
