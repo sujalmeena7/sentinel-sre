@@ -33,6 +33,8 @@ logger = logging.getLogger(__name__)
 # ─── Configuration ───────────────────────────────────────────────────
 JWT_ALGORITHM = "HS256"
 ACCESS_TOKEN_TTL_MIN = int(os.getenv("ACCESS_TOKEN_TTL_MIN", "1440"))  # 24h default
+VERIFY_EMAIL_TTL_MIN = int(os.getenv("VERIFY_EMAIL_TTL_MIN", "1440"))  # 24h
+RESET_PASSWORD_TTL_MIN = int(os.getenv("RESET_PASSWORD_TTL_MIN", "60"))  # 1h
 
 _JWT_FALLBACK_WARNED = False
 
@@ -98,6 +100,45 @@ def decode_access_token(token: str) -> dict:
         raise HTTPException(status_code=401, detail="Invalid token")
     if payload.get("type") != "access":
         raise HTTPException(status_code=401, detail="Invalid token type")
+    return payload
+
+
+# ─── Email verification + password reset tokens ─────────────────────
+# These are short-lived, purpose-scoped JWTs. `type` is checked on decode
+# so a verification token cannot be reused as an access token.
+
+def create_verification_token(user_id: str, email: str) -> str:
+    payload = {
+        "sub": user_id,
+        "email": email,
+        "type": "verify_email",
+        "exp": datetime.now(timezone.utc) + timedelta(minutes=VERIFY_EMAIL_TTL_MIN),
+        "iat": datetime.now(timezone.utc),
+    }
+    return jwt.encode(payload, _jwt_secret(), algorithm=JWT_ALGORITHM)
+
+
+def create_password_reset_token(user_id: str, email: str) -> str:
+    payload = {
+        "sub": user_id,
+        "email": email,
+        "type": "password_reset",
+        "exp": datetime.now(timezone.utc) + timedelta(minutes=RESET_PASSWORD_TTL_MIN),
+        "iat": datetime.now(timezone.utc),
+    }
+    return jwt.encode(payload, _jwt_secret(), algorithm=JWT_ALGORITHM)
+
+
+def decode_purpose_token(token: str, expected_type: str) -> dict:
+    """Decode a verification/reset token and assert its `type` matches."""
+    try:
+        payload = jwt.decode(token, _jwt_secret(), algorithms=[JWT_ALGORITHM])
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=400, detail="Link expired — please request a new one")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=400, detail="Invalid or tampered link")
+    if payload.get("type") != expected_type:
+        raise HTTPException(status_code=400, detail="Invalid link type")
     return payload
 
 

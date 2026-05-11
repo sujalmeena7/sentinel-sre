@@ -16,6 +16,9 @@ class User(SQLModel, table=True):
     # Optional display fields (for future profile page).
     name: Optional[str] = None
     role: str = Field(default="user")  # "user" | "admin"
+    # Email verification: False until user clicks the link in their verification email.
+    # Login is rejected for unverified users (unless ALLOW_UNVERIFIED_LOGIN=true).
+    email_verified: bool = Field(default=False)
 
 
 class Incident(SQLModel, table=True):

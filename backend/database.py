@@ -51,6 +51,18 @@ def init_db():
         _safe_ddl(conn, "ALTER TABLE incident ADD COLUMN analysis_error VARCHAR")
         _safe_ddl(conn, "CREATE INDEX IF NOT EXISTS ix_incident_analysis_status ON incident (analysis_status)")
 
+        # ── Email verification flow ──
+        # Add as nullable first so existing rows aren't rejected, then backfill
+        # them as verified (so we don't lock pre-existing users out), then we
+        # rely on the application-level default (False) for newly registered users.
+        _safe_ddl(conn, "ALTER TABLE \"user\" ADD COLUMN email_verified BOOLEAN")
+        try:
+            conn.execute(text(
+                "UPDATE \"user\" SET email_verified = TRUE WHERE email_verified IS NULL"
+            ))
+        except Exception as exc:
+            logger.debug(f"email_verified backfill skipped: {exc}")
+
 
 def get_session():
     with Session(engine) as session:

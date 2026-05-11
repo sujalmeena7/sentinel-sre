@@ -31,11 +31,15 @@ from auth_utils import (
     hash_password,
     verify_password,
     create_access_token,
+    create_verification_token,
+    create_password_reset_token,
+    decode_purpose_token,
     generate_webhook_token,
     hash_webhook_token,
     get_current_user,
     get_user_by_webhook_token,
 )
+from email_service import send_verification_email, send_password_reset_email
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -155,6 +159,7 @@ def _seed_admin_and_backfill() -> None:
                 webhook_token_hash=hash_webhook_token(raw_webhook),
                 role="admin",
                 name="Admin",
+                email_verified=True,
             )
             session.add(admin)
             session.commit()
@@ -211,13 +216,24 @@ def _public_user(user: User, webhook_token: Optional[str] = None) -> Dict[str, A
         "email": user.email,
         "name": user.name,
         "role": user.role,
+        "email_verified": bool(user.email_verified),
         "created_at": user.created_at.isoformat() if user.created_at else None,
     }
 
 
+def _allow_unverified_login() -> bool:
+    """Feature flag: when true, unverified users may still log in (legacy behaviour)."""
+    return os.getenv("ALLOW_UNVERIFIED_LOGIN", "").lower() == "true"
+
+
 @app.post("/api/v1/auth/register", response_model=AuthResponse)
 @limiter.limit("10/minute")
-def register(request: Request, body: RegisterRequest, session: Session = Depends(get_session)):
+def register(
+    request: Request,
+    body: RegisterRequest,
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_session),
+):
     email = body.email.strip().lower()
     if len(body.password) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
@@ -233,13 +249,23 @@ def register(request: Request, body: RegisterRequest, session: Session = Depends
         webhook_token_hash=hash_webhook_token(raw_webhook),
         name=body.name,
         role="user",
+        email_verified=False,
     )
     session.add(user)
     session.commit()
     session.refresh(user)
 
+    # Send verification email out-of-band so registration stays snappy.
+    verify_token = create_verification_token(user.id, user.email)
+    background_tasks.add_task(send_verification_email, user.email, verify_token, user.name)
+    logger.info(f"User registered (unverified): {email}")
+
+    # We DO return an access token so the user can land on a "check your email"
+    # screen, but every protected endpoint will still work because the access
+    # JWT itself isn't gated by email_verified — only login is. The webhook
+    # token is also returned now (shown once) so the user doesn't lose it if
+    # they never click the verification link.
     token = create_access_token(user.id, user.email)
-    logger.info(f"User registered: {email}")
     return AuthResponse(
         access_token=token,
         user=_public_user(user),
@@ -255,9 +281,132 @@ def login(request: Request, body: LoginRequest, session: Session = Depends(get_s
     if not user or not verify_password(body.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
+    if not user.email_verified and not _allow_unverified_login():
+        raise HTTPException(
+            status_code=403,
+            detail="Email not verified. Please check your inbox or request a new verification link.",
+        )
+
     token = create_access_token(user.id, user.email)
     logger.info(f"Login: {email}")
     return AuthResponse(access_token=token, user=_public_user(user))
+
+
+# ─── Email verification ────────────────────────────────────────────
+
+class VerifyEmailRequest(BaseModel):
+    token: str
+
+
+class ResendVerificationRequest(BaseModel):
+    email: EmailStr
+
+
+@app.post("/api/v1/auth/verify-email/confirm")
+@limiter.limit("20/minute")
+def confirm_email(
+    request: Request,
+    body: VerifyEmailRequest,
+    session: Session = Depends(get_session),
+):
+    payload = decode_purpose_token(body.token, expected_type="verify_email")
+    user_id = payload.get("sub")
+    user = session.get(User, user_id) if user_id else None
+    if not user:
+        raise HTTPException(status_code=400, detail="Invalid link — user no longer exists")
+
+    if not user.email_verified:
+        user.email_verified = True
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+        logger.info(f"Email verified: {user.email}")
+
+    return {"status": "verified", "email": user.email}
+
+
+@app.post("/api/v1/auth/verify-email/resend")
+@limiter.limit("3/minute")
+def resend_verification(
+    request: Request,
+    body: ResendVerificationRequest,
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_session),
+):
+    """
+    Always returns 200 with a generic message, regardless of whether the
+    email exists or is already verified. This avoids leaking which emails
+    are registered.
+    """
+    email = body.email.strip().lower()
+    user = session.exec(select(User).where(User.email == email)).first()
+    if user and not user.email_verified:
+        token = create_verification_token(user.id, user.email)
+        background_tasks.add_task(send_verification_email, user.email, token, user.name)
+        logger.info(f"Verification email re-sent to {email}")
+
+    return {"status": "ok", "message": "If that account exists, a verification email is on its way."}
+
+
+# ─── Password reset ────────────────────────────────────────────────
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
+
+
+@app.post("/api/v1/auth/forgot-password")
+@limiter.limit("5/minute")
+def forgot_password(
+    request: Request,
+    body: ForgotPasswordRequest,
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_session),
+):
+    """
+    Always returns 200 to prevent email enumeration. If the address is on
+    file, a reset email is dispatched in the background.
+    """
+    email = body.email.strip().lower()
+    user = session.exec(select(User).where(User.email == email)).first()
+    if user:
+        token = create_password_reset_token(user.id, user.email)
+        background_tasks.add_task(send_password_reset_email, user.email, token, user.name)
+        logger.info(f"Password reset email queued for {email}")
+
+    return {"status": "ok", "message": "If that account exists, a reset email is on its way."}
+
+
+@app.post("/api/v1/auth/reset-password")
+@limiter.limit("10/minute")
+def reset_password(
+    request: Request,
+    body: ResetPasswordRequest,
+    session: Session = Depends(get_session),
+):
+    if len(body.new_password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+
+    payload = decode_purpose_token(body.token, expected_type="password_reset")
+    user_id = payload.get("sub")
+    user = session.get(User, user_id) if user_id else None
+    if not user:
+        raise HTTPException(status_code=400, detail="Invalid link — user no longer exists")
+
+    user.password_hash = hash_password(body.new_password)
+    # Clicking the reset link is also implicit proof of email ownership — a
+    # convenient time to mark them verified if they weren't already.
+    if not user.email_verified:
+        user.email_verified = True
+    session.add(user)
+    session.commit()
+    logger.info(f"Password reset for {user.email}")
+
+    return {"status": "ok", "message": "Password updated. You can now sign in."}
 
 
 @app.get("/api/v1/auth/me")

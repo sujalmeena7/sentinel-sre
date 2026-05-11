@@ -11,6 +11,7 @@ export interface AuthUser {
   email: string;
   name: string | null;
   role: string;
+  email_verified?: boolean;
   created_at: string | null;
 }
 
@@ -28,6 +29,12 @@ interface AuthState {
   logout: () => void;
   rotateWebhookToken: () => Promise<string>;
   clearWebhookToken: () => void;
+
+  // Email verification + password reset
+  verifyEmail: (token: string) => Promise<void>;
+  resendVerification: (email: string) => Promise<void>;
+  forgotPassword: (email: string) => Promise<void>;
+  resetPassword: (token: string, newPassword: string) => Promise<void>;
 }
 
 const STORAGE_TOKEN_KEY = 'sentinel_jwt';
@@ -145,8 +152,63 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const clearWebhookToken = useCallback(() => setWebhookToken(null), []);
 
+  const verifyEmail = useCallback(async (verifyToken: string) => {
+    const res = await fetch(`${API_BASE}/auth/verify-email/confirm`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: verifyToken }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(formatApiError(data?.detail, 'Verification failed'));
+  }, []);
+
+  const resendVerification = useCallback(async (email: string) => {
+    const res = await fetch(`${API_BASE}/auth/verify-email/resend`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(formatApiError(data?.detail, 'Could not resend verification email'));
+  }, []);
+
+  const forgotPassword = useCallback(async (email: string) => {
+    const res = await fetch(`${API_BASE}/auth/forgot-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(formatApiError(data?.detail, 'Could not request password reset'));
+  }, []);
+
+  const resetPassword = useCallback(async (resetToken: string, newPassword: string) => {
+    const res = await fetch(`${API_BASE}/auth/reset-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: resetToken, new_password: newPassword }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(formatApiError(data?.detail, 'Could not reset password'));
+  }, []);
+
   return (
-    <AuthCtx.Provider value={{ user, token, webhookToken, login, register, logout, rotateWebhookToken, clearWebhookToken }}>
+    <AuthCtx.Provider
+      value={{
+        user,
+        token,
+        webhookToken,
+        login,
+        register,
+        logout,
+        rotateWebhookToken,
+        clearWebhookToken,
+        verifyEmail,
+        resendVerification,
+        forgotPassword,
+        resetPassword,
+      }}
+    >
       {children}
     </AuthCtx.Provider>
   );

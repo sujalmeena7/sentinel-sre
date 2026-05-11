@@ -8,24 +8,42 @@ import { Shield, Loader2, AlertCircle, Mail, Lock, ArrowRight } from 'lucide-rea
 import { useAuth } from '@/contexts/AuthContext';
 
 export default function LoginPage() {
-  const { login } = useAuth();
+  const { login, resendVerification } = useAuth();
   const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [needsVerification, setNeedsVerification] = useState(false);
+  const [resendStatus, setResendStatus] = useState<'idle' | 'sending' | 'sent'>('idle');
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    setNeedsVerification(false);
+    setResendStatus('idle');
     setLoading(true);
     try {
       await login(email.trim().toLowerCase(), password);
       router.push('/dashboard');
     } catch (err: any) {
-      setError(err?.message || 'Login failed');
+      const msg = err?.message || 'Login failed';
+      setError(msg);
+      // Backend returns "Email not verified..." for 403 in this case.
+      if (/not verified/i.test(msg)) setNeedsVerification(true);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const onResend = async () => {
+    if (!email) return;
+    setResendStatus('sending');
+    try {
+      await resendVerification(email.trim().toLowerCase());
+      setResendStatus('sent');
+    } catch {
+      setResendStatus('idle');
     }
   };
 
@@ -73,7 +91,12 @@ export default function LoginPage() {
             </label>
 
             <label className="block">
-              <span className="block text-[11px] uppercase tracking-[0.15em] text-white/40 mb-2">Password</span>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[11px] uppercase tracking-[0.15em] text-white/40">Password</span>
+                <Link href="/forgot-password" className="text-[11px] text-white/50 hover:text-white transition-colors">
+                  Forgot password?
+                </Link>
+              </div>
               <div className="relative">
                 <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/30 pointer-events-none" />
                 <input
@@ -94,11 +117,29 @@ export default function LoginPage() {
               <motion.div
                 initial={{ opacity: 0, y: -6 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="flex items-start gap-2 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300"
+                className="flex flex-col gap-2 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2.5 text-xs text-rose-300"
                 data-testid="login-error"
               >
-                <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-                <span>{error}</span>
+                <div className="flex items-start gap-2">
+                  <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                  <span>{error}</span>
+                </div>
+                {needsVerification && (
+                  <div className="flex items-center gap-2 pl-5 pt-1 border-t border-rose-500/20">
+                    {resendStatus === 'sent' ? (
+                      <span className="text-emerald-300">If that account exists, a fresh link is on its way.</span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={onResend}
+                        disabled={resendStatus === 'sending' || !email}
+                        className="text-rose-200 underline underline-offset-4 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {resendStatus === 'sending' ? 'Sending…' : 'Resend verification email'}
+                      </button>
+                    )}
+                  </div>
+                )}
               </motion.div>
             )}
 
