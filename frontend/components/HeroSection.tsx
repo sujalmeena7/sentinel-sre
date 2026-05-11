@@ -92,7 +92,6 @@ function Navbar() {
     { label: 'Features', href: '#features', active: true },
     { label: 'Insights', href: '#insights' },
     { label: 'About', href: '#about' },
-    { label: 'Case Studies', href: '#case-studies', strike: true },
     { label: 'Contact', href: '#contact' },
   ]
 
@@ -147,10 +146,10 @@ function Navbar() {
           <div className="hidden md:block">
             <a
               href="/register"
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full text-[13px] font-medium text-black bg-gradient-to-b from-white to-gray-300 hover:from-gray-100 hover:to-gray-200 transition-all shadow-[0_0_20px_rgba(255,255,255,0.1)]"
+              className="group inline-flex items-center gap-1.5 px-5 py-2.5 rounded-full text-[13px] font-semibold text-black bg-gradient-to-b from-white via-gray-100 to-gray-300 hover:from-gray-50 hover:via-white hover:to-gray-200 transition-all duration-300 shadow-[0_0_0_1px_rgba(255,255,255,0.12),0_4px_20px_rgba(255,255,255,0.15),0_0_40px_rgba(255,160,60,0.12)] hover:shadow-[0_0_0_1px_rgba(255,255,255,0.2),0_6px_28px_rgba(255,255,255,0.2),0_0_50px_rgba(255,160,60,0.18)] hover:-translate-y-0.5 active:translate-y-0"
             >
               Get Started for Free
-              <ChevronRight className="w-3.5 h-3.5" />
+              <ChevronRight className="w-3.5 h-3.5 transition-transform duration-300 group-hover:translate-x-0.5" />
             </a>
           </div>
 
@@ -186,7 +185,7 @@ function Navbar() {
             ))}
             <a
               href="/register"
-              className="block mt-2 text-center px-4 py-2 rounded-full text-sm font-medium text-black bg-gradient-to-b from-white to-gray-300"
+              className="block mt-2 text-center px-5 py-2.5 rounded-full text-sm font-semibold text-black bg-gradient-to-b from-white via-gray-100 to-gray-300 shadow-[0_0_20px_rgba(255,255,255,0.15),0_0_40px_rgba(255,160,60,0.12)]"
             >
               Get Started for Free
             </a>
