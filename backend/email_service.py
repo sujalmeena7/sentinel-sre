@@ -1,10 +1,13 @@
 """
 Email delivery for Sentinel-SRE.
 
-Sends transactional emails (verification, password reset) via SMTP.
-If SMTP is not configured, falls back to logging the email body to the
-backend console so development / self-hosted deploys still work and the
-user can copy the link manually.
+Tries providers in this order:
+  1. SMTP       (if SMTP_* env vars configured)
+  2. AWS SES    (if AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY configured)
+  3. Console    (logs the email body so dev / self-hosted deploys still work)
+
+AWS SES uses HTTPS (port 443) which works on Render free tier where
+outbound SMTP (port 587/465) is blocked.
 
 Configuration (env vars):
   SMTP_HOST        e.g. smtp.gmail.com
@@ -14,6 +17,10 @@ Configuration (env vars):
   SMTP_FROM        "From" address; defaults to SMTP_USER
   SMTP_USE_SSL     "true"  → implicit TLS on port 465
                    anything else → STARTTLS on port 587
+  AWS_ACCESS_KEY_ID
+  AWS_SECRET_ACCESS_KEY
+  AWS_REGION       default us-east-1
+  SMTP_FROM        sender address used by all providers
   FRONTEND_URL     base URL used to build verification / reset links,
                    e.g. https://sentinel-sre.vercel.app
 """
@@ -38,54 +45,106 @@ def _smtp_configured() -> bool:
     return bool(os.getenv("SMTP_HOST") and os.getenv("SMTP_USER") and os.getenv("SMTP_PASSWORD"))
 
 
+def _ses_configured() -> bool:
+    return bool(os.getenv("AWS_ACCESS_KEY_ID") and os.getenv("AWS_SECRET_ACCESS_KEY"))
+
+
+def _send_via_ses(to: str, subject: str, text_body: str, html_body: Optional[str] = None) -> bool:
+    """Send via AWS SES v2 API (HTTPS port 443 — works on Render free tier)."""
+    try:
+        import boto3
+    except ImportError:
+        logger.debug("boto3 not installed — skipping SES fallback")
+        return False
+
+    from_addr = os.getenv("SMTP_FROM", os.getenv("SMTP_USER", "noreply@sentinel-sre.local"))
+    region = os.getenv("AWS_REGION", "us-east-1")
+
+    try:
+        client = boto3.client("sesv2", region_name=region)
+        content: dict = {
+            "Simple": {
+                "Subject": {"Data": subject, "Charset": "UTF-8"},
+                "Body": {"Text": {"Data": text_body, "Charset": "UTF-8"}},
+            }
+        }
+        if html_body:
+            content["Simple"]["Body"]["Html"] = {"Data": html_body, "Charset": "UTF-8"}
+
+        client.send_email(
+            FromEmailAddress=from_addr,
+            Destination={"ToAddresses": [to]},
+            Content=content,
+        )
+        logger.info(f"Email sent via SES to {to}: {subject}")
+        return True
+    except Exception as exc:
+        logger.error(f"SES delivery failed for {to}: {exc}")
+        return False
+
+
+def _log_to_console(to: str, subject: str, text_body: str) -> bool:
+    logger.warning(
+        "Email delivery fallback — logging to console.\n"
+        "--- EMAIL ---\n"
+        "To:      %s\n"
+        "Subject: %s\n"
+        "Body:\n%s\n"
+        "-------------",
+        to, subject, text_body,
+    )
+    return True
+
+
 def send_email(to: str, subject: str, text_body: str, html_body: Optional[str] = None) -> bool:
     """
     Send an email. Returns True if delivered (or logged in dev).
     Never raises — callers should keep working even if email delivery fails.
     """
-    if not _smtp_configured():
-        logger.warning(
-            "SMTP not configured — logging email to console instead.\n"
-            "--- EMAIL ---\n"
-            "To:      %s\n"
-            "Subject: %s\n"
-            "Body:\n%s\n"
-            "-------------",
-            to, subject, text_body,
-        )
-        return True
+    # ── 1. Try SMTP ──
+    if _smtp_configured():
+        host = os.getenv("SMTP_HOST")
+        port = int(os.getenv("SMTP_PORT", "587"))
+        user = os.getenv("SMTP_USER")
+        password = os.getenv("SMTP_PASSWORD")
+        from_addr = os.getenv("SMTP_FROM", user)
+        use_ssl = os.getenv("SMTP_USE_SSL", "").lower() == "true"
 
-    host = os.getenv("SMTP_HOST")
-    port = int(os.getenv("SMTP_PORT", "587"))
-    user = os.getenv("SMTP_USER")
-    password = os.getenv("SMTP_PASSWORD")
-    from_addr = os.getenv("SMTP_FROM", user)
-    use_ssl = os.getenv("SMTP_USE_SSL", "").lower() == "true"
+        msg = EmailMessage()
+        msg["From"] = from_addr
+        msg["To"] = to
+        msg["Subject"] = subject
+        msg.set_content(text_body)
+        if html_body:
+            msg.add_alternative(html_body, subtype="html")
 
-    msg = EmailMessage()
-    msg["From"] = from_addr
-    msg["To"] = to
-    msg["Subject"] = subject
-    msg.set_content(text_body)
-    if html_body:
-        msg.add_alternative(html_body, subtype="html")
+        try:
+            if use_ssl:
+                context = ssl.create_default_context()
+                with smtplib.SMTP_SSL(host, port, context=context, timeout=15) as server:
+                    server.login(user, password)
+                    server.send_message(msg)
+            else:
+                with smtplib.SMTP(host, port, timeout=15) as server:
+                    server.starttls(context=ssl.create_default_context())
+                    server.login(user, password)
+                    server.send_message(msg)
+            logger.info(f"Email sent via SMTP to {to}: {subject}")
+            return True
+        except OSError as exc:
+            # Network errors (e.g. Render blocking port 587) — fall through to SES
+            logger.warning(f"SMTP network error for {to}: {exc} — trying SES fallback")
+        except Exception as exc:
+            # Auth / config errors — don't bother with SES, just log
+            logger.error(f"SMTP delivery failed for {to}: {exc}")
 
-    try:
-        if use_ssl:
-            context = ssl.create_default_context()
-            with smtplib.SMTP_SSL(host, port, context=context, timeout=15) as server:
-                server.login(user, password)
-                server.send_message(msg)
-        else:
-            with smtplib.SMTP(host, port, timeout=15) as server:
-                server.starttls(context=ssl.create_default_context())
-                server.login(user, password)
-                server.send_message(msg)
-        logger.info(f"Email sent to {to}: {subject}")
-        return True
-    except Exception as exc:
-        logger.error(f"SMTP delivery failed for {to}: {exc}")
-        return False
+    # ── 2. Try AWS SES (HTTPS, port 443 — works on Render free tier) ──
+    if _ses_configured():
+        if _send_via_ses(to, subject, text_body, html_body):
+            return True
+
+    # ── 3. Console fallback (dev / local) ──
+    return _log_to_console(to, subject, text_body)
 
 
 # ─── Templates ──────────────────────────────────────────────────────
