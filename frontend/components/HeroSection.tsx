@@ -129,8 +129,6 @@ function Navbar() {
                 className={`relative px-3 py-1.5 text-[13px] transition-colors rounded-lg hover:bg-white/5 ${
                   l.active
                     ? 'text-white'
-                    : l.strike
-                    ? 'text-white/30 line-through decoration-white/20'
                     : 'text-white/50 hover:text-white/80'
                 }`}
               >
@@ -174,11 +172,7 @@ function Navbar() {
                 key={l.label}
                 href={l.href}
                 onClick={() => setMobileOpen(false)}
-                className={`block px-3 py-2 text-sm rounded-lg ${
-                  l.strike
-                    ? 'text-white/30 line-through'
-                    : 'text-white/60 hover:text-white hover:bg-white/5'
-                }`}
+                className={`block px-3 py-2 text-sm rounded-lg text-white/60 hover:text-white hover:bg-white/5`}
               >
                 {l.label}
               </a>
