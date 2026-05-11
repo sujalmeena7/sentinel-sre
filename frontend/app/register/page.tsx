@@ -46,7 +46,11 @@ export default function RegisterPage() {
 
   const continueToDashboard = () => {
     clearWebhookToken();
-    router.push('/dashboard');
+    if (user && !user.email_verified) {
+      router.push('/login');
+    } else {
+      router.push('/dashboard');
+    }
   };
 
   // ─── Success state: display webhook token exactly once ───

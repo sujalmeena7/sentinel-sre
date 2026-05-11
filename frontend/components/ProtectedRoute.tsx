@@ -12,6 +12,8 @@ export default function ProtectedRoute({ children }: { children: React.ReactNode
   useEffect(() => {
     if (user === null) {
       router.replace('/login');
+    } else if (user && user.email_verified === false) {
+      router.replace('/login');
     }
   }, [user, router]);
 
