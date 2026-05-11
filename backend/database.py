@@ -16,10 +16,16 @@ connect_args = {"check_same_thread": False} if is_sqlite else {}
 engine = create_engine(DATABASE_URL, echo=False, connect_args=connect_args)
 
 
-def _safe_ddl(conn, stmt: str) -> None:
-    """Run a DDL statement, ignore 'already exists' / duplicate errors."""
+def _safe_ddl(stmt: str) -> None:
+    """Run a DDL statement in its OWN transaction.
+
+    On Postgres, a failed statement aborts the entire surrounding transaction,
+    poisoning every subsequent statement. By opening a fresh transaction per
+    DDL we keep migrations idempotent and independent.
+    """
     try:
-        conn.execute(text(stmt))
+        with engine.begin() as conn:
+            conn.execute(text(stmt))
     except Exception as exc:  # broad by design — migrations are idempotent
         msg = str(exc).lower()
         if "exist" in msg or "duplicate" in msg:
@@ -31,37 +37,36 @@ def init_db():
     """Create tables, run idempotent column migrations, backfill user_id."""
     SQLModel.metadata.create_all(engine)
 
-    with engine.begin() as conn:
-        # ── Legacy Incident column migrations (pre-auth) ──
-        _safe_ddl(conn, "ALTER TABLE incident ADD COLUMN expected_cause VARCHAR")
-        _safe_ddl(conn, "ALTER TABLE incident ADD COLUMN predicted_cause VARCHAR")
-        _safe_ddl(conn, "ALTER TABLE incident ADD COLUMN is_correct BOOLEAN")
-        _safe_ddl(conn, "ALTER TABLE incident ADD COLUMN human_feedback_score INTEGER DEFAULT 0")
-        _safe_ddl(conn, "ALTER TABLE incident ADD COLUMN human_feedback_count INTEGER DEFAULT 0")
-        _safe_ddl(conn, "ALTER TABLE incident ADD COLUMN human_feedback_comment VARCHAR")
+    # ── Legacy Incident column migrations (pre-auth) ──
+    _safe_ddl("ALTER TABLE incident ADD COLUMN expected_cause VARCHAR")
+    _safe_ddl("ALTER TABLE incident ADD COLUMN predicted_cause VARCHAR")
+    _safe_ddl("ALTER TABLE incident ADD COLUMN is_correct BOOLEAN")
+    _safe_ddl("ALTER TABLE incident ADD COLUMN human_feedback_score INTEGER DEFAULT 0")
+    _safe_ddl("ALTER TABLE incident ADD COLUMN human_feedback_count INTEGER DEFAULT 0")
+    _safe_ddl("ALTER TABLE incident ADD COLUMN human_feedback_comment VARCHAR")
 
-        # ── Multi-tenancy: add user_id FK column to incident ──
-        _safe_ddl(conn, "ALTER TABLE incident ADD COLUMN user_id VARCHAR")
-        # Index on user_id for tenant-scoped queries (both dialects).
-        _safe_ddl(conn, "CREATE INDEX IF NOT EXISTS ix_incident_user_id ON incident (user_id)")
+    # ── Multi-tenancy: add user_id FK column to incident ──
+    _safe_ddl("ALTER TABLE incident ADD COLUMN user_id VARCHAR")
+    _safe_ddl("CREATE INDEX IF NOT EXISTS ix_incident_user_id ON incident (user_id)")
 
-        # ── Async analysis tracking (non-blocking analyze pipeline) ──
-        _safe_ddl(conn, "ALTER TABLE incident ADD COLUMN analysis_status VARCHAR DEFAULT 'idle'")
-        _safe_ddl(conn, "ALTER TABLE incident ADD COLUMN analysis_result JSON")
-        _safe_ddl(conn, "ALTER TABLE incident ADD COLUMN analysis_error VARCHAR")
-        _safe_ddl(conn, "CREATE INDEX IF NOT EXISTS ix_incident_analysis_status ON incident (analysis_status)")
+    # ── Async analysis tracking (non-blocking analyze pipeline) ──
+    _safe_ddl("ALTER TABLE incident ADD COLUMN analysis_status VARCHAR DEFAULT 'idle'")
+    _safe_ddl("ALTER TABLE incident ADD COLUMN analysis_result JSON")
+    _safe_ddl("ALTER TABLE incident ADD COLUMN analysis_error VARCHAR")
+    _safe_ddl("CREATE INDEX IF NOT EXISTS ix_incident_analysis_status ON incident (analysis_status)")
 
-        # ── Email verification flow ──
-        # Add as nullable first so existing rows aren't rejected, then backfill
-        # them as verified (so we don't lock pre-existing users out), then we
-        # rely on the application-level default (False) for newly registered users.
-        _safe_ddl(conn, "ALTER TABLE \"user\" ADD COLUMN email_verified BOOLEAN")
-        try:
+    # ── Email verification flow ──
+    # Add as nullable first so existing rows aren't rejected, then backfill
+    # them as verified (so we don't lock pre-existing users out). New rows use
+    # the application-level default (False) from the SQLModel definition.
+    _safe_ddl("ALTER TABLE \"user\" ADD COLUMN email_verified BOOLEAN")
+    try:
+        with engine.begin() as conn:
             conn.execute(text(
                 "UPDATE \"user\" SET email_verified = TRUE WHERE email_verified IS NULL"
             ))
-        except Exception as exc:
-            logger.debug(f"email_verified backfill skipped: {exc}")
+    except Exception as exc:
+        logger.debug(f"email_verified backfill skipped: {exc}")
 
 
 def get_session():
