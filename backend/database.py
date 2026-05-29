@@ -2,6 +2,7 @@ import os
 import logging
 from sqlmodel import create_engine, SQLModel, Session
 from sqlalchemy import text
+from sqlalchemy.pool import QueuePool
 
 logger = logging.getLogger(__name__)
 
@@ -13,7 +14,19 @@ DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./incidents.db")
 is_sqlite = DATABASE_URL.startswith("sqlite")
 connect_args = {"check_same_thread": False} if is_sqlite else {}
 
-engine = create_engine(DATABASE_URL, echo=False, connect_args=connect_args)
+# Production Postgres connection pooling settings
+pool_kwargs = {}
+if not is_sqlite:
+    pool_kwargs = {
+        "poolclass": QueuePool,
+        "pool_size": 5,
+        "max_overflow": 10,
+        "pool_timeout": 30,
+        "pool_recycle": 1800,  # Recycle connections every 30 minutes
+        "pool_pre_ping": True,  # Verify connections are alive before use
+    }
+
+engine = create_engine(DATABASE_URL, echo=False, connect_args=connect_args, **pool_kwargs)
 
 
 def _safe_ddl(stmt: str) -> None:

@@ -46,7 +46,18 @@ def _jwt_secret() -> str:
     if not secret:
         # In production environments, refuse to issue tokens with a predictable secret.
         env = os.getenv("APP_ENV", "").lower() or os.getenv("ENV", "").lower()
-        if env in {"production", "prod"} or os.getenv("RENDER") or os.getenv("VERCEL"):
+        is_production = (
+            env in {"production", "prod", "staging"}
+            or os.getenv("RENDER")
+            or os.getenv("VERCEL")
+            or os.getenv("RAILWAY_ENVIRONMENT")
+            or os.getenv("FLY_APP_NAME")
+            or os.getenv("HEROKU_APP_NAME")
+            or os.getenv("AWS_EXECUTION_ENV")
+            or os.getenv("GOOGLE_CLOUD_PROJECT")
+            or os.getenv("DATABASE_URL", "").startswith("postgres")
+        )
+        if is_production:
             raise RuntimeError(
                 "JWT_SECRET is not set in a production environment. "
                 "Refusing to issue tokens with a predictable dev secret."

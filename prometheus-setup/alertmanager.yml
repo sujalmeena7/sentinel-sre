@@ -5,5 +5,7 @@ route:
 receivers:
   - name: sentinel-sre
     webhook_configs:
-      - url: "https://sentinel-backend-box9.onrender.com/api/v1/telemetry/prometheus/CEOTOkoIjB8w4Asv7CehOFcrE6vs9J_ZlXbV95Bd4d8"
+      # Replace YOUR_WEBHOOK_TOKEN with your actual webhook token from Sentinel-SRE registration.
+      # NEVER commit real tokens to source control.
+      - url: "https://YOUR-BACKEND-HOST/api/v1/telemetry/prometheus/YOUR_WEBHOOK_TOKEN"
         send_resolved: true

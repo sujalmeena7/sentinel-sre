@@ -5,6 +5,8 @@ import threading
 import logging
 import re
 import httpx
+from concurrent.futures import ThreadPoolExecutor
+from collections import deque
 from urllib.parse import urlparse
 from fastapi import FastAPI, Depends, BackgroundTasks, HTTPException, Security, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -12,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlmodel import Session, select
 from typing import List, Dict, Any, Optional, Union
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, field_validator
 from datetime import datetime, timezone, timedelta
 from uuid import uuid4
 import hmac
@@ -57,6 +59,28 @@ def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
         content={"detail": f"Rate limit exceeded: {exc.detail}"},
     )
 
+
+# ─── Security Headers Middleware ─────────────────────────────────────
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import Response
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response: Response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+        # Only add HSTS in production (when not localhost)
+        if request.url.scheme == "https":
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        return response
+
+
+app.add_middleware(SecurityHeadersMiddleware)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -64,7 +88,9 @@ app.add_middleware(
         "http://localhost:5173",
         "https://sentinel-sre.vercel.app",
     ],
-    allow_origin_regex=r"https://sentinel-.*.vercel.app",
+    # Tightened regex: only allows sentinel-sre followed by optional
+    # Vercel preview suffixes (alphanumeric + hyphens), not arbitrary subdomains.
+    allow_origin_regex=r"https://sentinel-sre[a-z0-9-]*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -84,6 +110,20 @@ class IncidentIngest(BaseModel):
     root_cause: Optional[str] = None
     fixes_applied: List[str] = []
     runbook_refs: List[str] = []
+
+    @field_validator("service", "environment")
+    @classmethod
+    def sanitize_string_fields(cls, v: str) -> str:
+        """Strip HTML/script tags and limit length to prevent stored XSS."""
+        import re as _re
+        v = _re.sub(r"<[^>]*>", "", v)  # Strip HTML tags
+        return v[:200].strip()
+
+    @field_validator("symptoms")
+    @classmethod
+    def sanitize_symptoms(cls, v: List[str]) -> List[str]:
+        import re as _re
+        return [_re.sub(r"<[^>]*>", "", s)[:500].strip() for s in v[:50]]
 
 
 def parse_dt(val: Optional[str]) -> Optional[datetime]:
@@ -105,18 +145,27 @@ def _require_owned_incident(session: Session, incident_id: str, current_user: Us
     return incident
 
 
+# Bounded thread pool to prevent resource exhaustion under load.
+# Max 10 concurrent background tasks; additional submissions queue up.
+_background_pool = ThreadPoolExecutor(max_workers=10, thread_name_prefix="bg-task")
+
+
 def launch_background(func, *args, **kwargs) -> None:
-    """Run work in a detached daemon thread from sync or async routes safely."""
-    thread = threading.Thread(target=func, args=args, kwargs=kwargs, daemon=True)
-    thread.start()
+    """Submit work to a bounded thread pool (max 10 concurrent tasks)."""
+    _background_pool.submit(func, *args, **kwargs)
 
 
 security = HTTPBearer()
 
 
 def verify_telemetry_token(credentials: HTTPAuthorizationCredentials = Security(security)):
-    expected_token = os.getenv("TELEMETRY_SECRET_TOKEN", "change-me-in-production")
-    if credentials.credentials != expected_token:
+    expected_token = os.getenv("TELEMETRY_SECRET_TOKEN", "")
+    if not expected_token or expected_token == "change-me-in-production":
+        raise HTTPException(
+            status_code=503,
+            detail="Telemetry endpoint not configured. Set TELEMETRY_SECRET_TOKEN in environment.",
+        )
+    if not hmac.compare_digest(credentials.credentials, expected_token):
         raise HTTPException(
             status_code=401,
             detail="Invalid telemetry authentication token",
@@ -147,7 +196,22 @@ def on_startup():
 
 def _seed_admin_and_backfill() -> None:
     admin_email = os.getenv("ADMIN_EMAIL", "admin@sentinel.local").strip().lower()
-    admin_password = os.getenv("ADMIN_PASSWORD", "admin123")
+    admin_password = os.getenv("ADMIN_PASSWORD", "")
+
+    # Refuse to seed with a weak/default password in production
+    if not admin_password or admin_password in ("admin123", "password", "changeme"):
+        env = os.getenv("APP_ENV", "").lower() or os.getenv("ENV", "").lower()
+        if env in {"production", "prod"} or os.getenv("RENDER") or os.getenv("VERCEL"):
+            logger.error(
+                "ADMIN_PASSWORD is not set or is a known weak default. "
+                "Refusing to seed admin in production. Set a strong ADMIN_PASSWORD."
+            )
+            return
+        # In dev, fall back to a random password and log it
+        if not admin_password:
+            import secrets
+            admin_password = secrets.token_urlsafe(16)
+            logger.warning(f"ADMIN_PASSWORD not set — using random dev password: {admin_password}")
 
     with Session(engine) as session:
         admin = session.exec(select(User).where(User.email == admin_email)).first()
@@ -197,6 +261,19 @@ class RegisterRequest(BaseModel):
     password: str
     name: Optional[str] = None
 
+    @field_validator("password")
+    @classmethod
+    def validate_password_strength(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError("Password must be at least 8 characters")
+        if not any(c.isupper() for c in v):
+            raise ValueError("Password must contain at least one uppercase letter")
+        if not any(c.islower() for c in v):
+            raise ValueError("Password must contain at least one lowercase letter")
+        if not any(c.isdigit() for c in v):
+            raise ValueError("Password must contain at least one digit")
+        return v
+
 
 class LoginRequest(BaseModel):
     email: EmailStr
@@ -235,8 +312,7 @@ def register(
     session: Session = Depends(get_session),
 ):
     email = body.email.strip().lower()
-    if len(body.password) < 8:
-        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+    # Password validation is handled by the Pydantic model validator
 
     existing = session.exec(select(User).where(User.email == email)).first()
     if existing:
@@ -358,6 +434,19 @@ class ResetPasswordRequest(BaseModel):
     token: str
     new_password: str
 
+    @field_validator("new_password")
+    @classmethod
+    def validate_password_strength(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError("Password must be at least 8 characters")
+        if not any(c.isupper() for c in v):
+            raise ValueError("Password must contain at least one uppercase letter")
+        if not any(c.islower() for c in v):
+            raise ValueError("Password must contain at least one lowercase letter")
+        if not any(c.isdigit() for c in v):
+            raise ValueError("Password must contain at least one digit")
+        return v
+
 
 @app.post("/api/v1/auth/forgot-password")
 @limiter.limit("5/minute")
@@ -388,8 +477,7 @@ def reset_password(
     body: ResetPasswordRequest,
     session: Session = Depends(get_session),
 ):
-    if len(body.new_password) < 8:
-        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+    # Password validation is handled by the Pydantic model validator
 
     payload = decode_purpose_token(body.token, expected_type="password_reset")
     user_id = payload.get("sub")
@@ -872,7 +960,9 @@ def trigger_simulation(
 
 
 @app.get("/api/v1/incidents", response_model=List[Incident])
+@limiter.limit("60/minute")
 def get_incidents(
+    request: Request,
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
@@ -1368,8 +1458,7 @@ async def verify_slack_signature(request: Request, body_bytes: bytes = b""):
     timestamp = request.headers.get("X-Slack-Request-Timestamp", "")
     signature = request.headers.get("X-Slack-Signature", "")
     if not timestamp or not signature:
-        logger.warning("Slack request missing signature headers - skipping verification")
-        return True
+        raise HTTPException(status_code=400, detail="Missing Slack signature headers")
 
     try:
         if abs(datetime.now(timezone.utc).timestamp() - int(timestamp)) > 60 * 5:
@@ -1378,7 +1467,7 @@ async def verify_slack_signature(request: Request, body_bytes: bytes = b""):
         raise HTTPException(status_code=400, detail="Invalid timestamp formatting")
 
     sig_basestring = f"v0:{timestamp}:{body_bytes.decode('utf-8')}"
-    my_signature = "v0=" + hmac.new(
+    my_signature = "v0=" + hmac.HMAC(
         slack_secret.encode(),
         sig_basestring.encode(),
         hashlib.sha256
@@ -1543,7 +1632,9 @@ def simulate_slack_action(
     return {"status": "success", "action": req.action, "message": result}
 
 
-chatops_activity_log: List[Dict[str, Any]] = []
+# Bounded in-memory log — keeps only the last 1000 entries to prevent memory leaks.
+# In production, consider persisting to the database instead.
+chatops_activity_log: deque = deque(maxlen=1000)
 
 
 class ChatOpsLogEntry(BaseModel):

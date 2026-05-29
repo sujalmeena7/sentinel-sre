@@ -302,7 +302,7 @@ export async function fetchChatOpsLogs(incident_id?: string): Promise<ChatOpsLog
   const url = incident_id
     ? `${API_BASE}/chatops/logs?incident_id=${incident_id}`
     : `${API_BASE}/chatops/logs`;
-  const res = await fetch(url, { cache: 'no-store' });
+  const res = await authFetch(url, { cache: 'no-store' });
   if (!res.ok) return [];
   return res.json();
 }
