@@ -97,6 +97,19 @@ app.add_middleware(
 )
 
 
+# ─── Health Check (lightweight, no DB/LLM) ───────────────────────────
+@app.get("/health")
+def health_check():
+    """Lightweight health check for uptime monitoring. No DB or LLM calls."""
+    return {"status": "ok", "version": "0.3.0"}
+
+
+@app.get("/api/v1/health")
+def health_check_v1():
+    """Versioned health check endpoint."""
+    return {"status": "ok", "version": "0.3.0"}
+
+
 class IncidentIngest(BaseModel):
     id: Optional[str] = None
     service: str
@@ -192,6 +205,27 @@ class PrometheusPayload(BaseModel):
 def on_startup():
     init_db()
     _seed_admin_and_backfill()
+    _reap_stale_tasks()
+
+
+def _reap_stale_tasks() -> None:
+    """Reset any incidents stuck in 'processing' for >5 minutes back to 'failed'.
+    This handles cases where the worker restarted mid-analysis."""
+    stale_cutoff = datetime.now(timezone.utc) - timedelta(minutes=5)
+    with Session(engine) as session:
+        stale = session.exec(
+            select(Incident).where(
+                Incident.analysis_status == "processing",
+                Incident.start_time < stale_cutoff,
+            )
+        ).all()
+        for incident in stale:
+            incident.analysis_status = "failed"
+            incident.analysis_error = "Analysis timed out (worker restart). Please retry."
+            session.add(incident)
+        if stale:
+            session.commit()
+            logger.info(f"Reaped {len(stale)} stale processing tasks")
 
 
 def _seed_admin_and_backfill() -> None:
@@ -500,6 +534,18 @@ def reset_password(
 @app.get("/api/v1/auth/me")
 def read_me(current_user: User = Depends(get_current_user)):
     return _public_user(current_user)
+
+
+@app.post("/api/v1/auth/refresh")
+@limiter.limit("30/minute")
+def refresh_token(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+):
+    """Issue a fresh access token if the current one is valid.
+    Frontend should call this when the token is within 2 hours of expiry."""
+    new_token = create_access_token(current_user.id, current_user.email)
+    return {"access_token": new_token, "token_type": "bearer"}
 
 
 @app.post("/api/v1/auth/rotate-webhook-token", response_model=AuthResponse)

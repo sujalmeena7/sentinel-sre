@@ -9,6 +9,8 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@splinetool/react-spline": "^4.1.0",
+    "@splinetool/runtime": "^1.12.95",
     "framer-motion": "^11.0.0",
     "hls.js": "^1.6.16",
     "lucide-react": "^0.400.0",

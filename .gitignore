@@ -35,3 +35,6 @@ credentials.json
 *.pem
 *.key
 .credentials
+
+# Kiro settings (contains tokens)
+.kiro/settings/mcp.json

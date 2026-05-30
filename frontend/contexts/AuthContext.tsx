@@ -87,6 +87,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  // ── Auto-refresh token every 22 hours (token expires at 24h) ──
+  useEffect(() => {
+    if (!token) return;
+    const REFRESH_INTERVAL = 22 * 60 * 60 * 1000; // 22 hours
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`${API_BASE}/auth/refresh`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setToken(data.access_token);
+          try { localStorage.setItem(STORAGE_TOKEN_KEY, data.access_token); } catch {}
+        }
+      } catch { /* silent — will retry next interval */ }
+    }, REFRESH_INTERVAL);
+    return () => clearInterval(interval);
+  }, [token]);
+
   const persistSession = useCallback((jwt: string, u: AuthUser) => {
     setToken(jwt);
     setUser(u);

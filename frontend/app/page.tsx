@@ -3,745 +3,549 @@
 import { useState, useEffect, useRef } from 'react'
 import { m as motion, AnimatePresence, useInView, LazyMotion, domAnimation } from 'framer-motion'
 import {
-  Brain,
-  Zap,
-  ArrowRight,
-  Github,
-  Activity,
-  Shield,
-  Sparkles,
-  Cpu,
-  Radio,
-  Gauge,
-  Database,
-  Menu,
-  X,
-  Loader2,
-  Flame,
-  Network,
-  MemoryStick,
-  ServerCrash,
-  GitBranch,
-  RefreshCw,
-  FileText,
-  Layers,
-  Check,
-  Copy,
-  Terminal,
-  FileCode,
-  Plug,
+  Shield, Zap, Brain, GitBranch, Gauge, RefreshCw, FileText, Layers,
+  ArrowRight, Circle, Activity, Network, Database, Server, AlertCircle,
+  TrendingUp, Lock, Terminal, Menu, X,
 } from 'lucide-react'
+import { FeatureCard } from '@/components/FeatureCard'
 
-/* =========================================================
-   MOTION WRAPPER
-   ========================================================= */
-
-function MotionWrap({ children }: { children: React.ReactNode }) {
-  return <LazyMotion features={domAnimation}>{children}</LazyMotion>
-}
-
-/* =========================================================
-   REUSABLE PRIMITIVES
-   ========================================================= */
-
-function FadeIn({ children, delay = 0, y = 30, className = '' }: {
-  children: React.ReactNode; delay?: number; y?: number; className?: string
-}) {
-  const ref = useRef<HTMLDivElement>(null)
-  const inView = useInView(ref, { once: true, margin: '-60px' })
-  return (
-    <motion.div
-      ref={ref}
-      initial={{ opacity: 0, y }}
-      animate={inView ? { opacity: 1, y: 0 } : { opacity: 0, y }}
-      transition={{ duration: 0.8, delay, ease: [0.25, 0.46, 0.45, 0.94] }}
-      className={className}
-    >
-      {children}
-    </motion.div>
-  )
-}
-
-/* =========================================================
-   NAVBAR — Floating glass pill
-   ========================================================= */
-
-function Navbar() {
-  const [scrolled, setScrolled] = useState(false)
-  const [open, setOpen] = useState(false)
+export default function App() {
+  const [isScrolled, setIsScrolled] = useState(false)
+  const [selectedService, setSelectedService] = useState('checkout-ui')
+  const [selectedFailure, setSelectedFailure] = useState('latency')
+  const [isAnalyzing, setIsAnalyzing] = useState(false)
+  const [telemetryEvents, setTelemetryEvents] = useState<string[]>([])
+  const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 })
 
   useEffect(() => {
-    const onScroll = () => setScrolled(window.scrollY > 40)
-    window.addEventListener('scroll', onScroll)
-    return () => window.removeEventListener('scroll', onScroll)
+    const handleScroll = () => setIsScrolled(window.scrollY > 20)
+    const handleMouseMove = (e: MouseEvent) => setMousePosition({ x: e.clientX, y: e.clientY })
+    window.addEventListener('scroll', handleScroll)
+    window.addEventListener('mousemove', handleMouseMove)
+    return () => {
+      window.removeEventListener('scroll', handleScroll)
+      window.removeEventListener('mousemove', handleMouseMove)
+    }
   }, [])
 
-  return (
-    <motion.header
-      initial={{ y: -20, opacity: 0 }}
-      animate={{ y: 0, opacity: 1 }}
-      transition={{ duration: 0.6, delay: 0.2 }}
-      className="fixed top-0 inset-x-0 z-50 px-4 pt-4"
-    >
-      <div className={`max-w-5xl mx-auto rounded-2xl border transition-all duration-500 ${
-        scrolled
-          ? 'bg-black/70 backdrop-blur-2xl border-white/[0.08] shadow-[0_8px_40px_rgba(0,0,0,0.5)]'
-          : 'bg-transparent border-transparent'
-      }`}>
-        <div className="flex items-center justify-between px-5 py-3">
-          <a href="#" className="flex items-center gap-2.5">
-            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-orange-500 to-orange-600 flex items-center justify-center shadow-[0_0_20px_rgba(249,115,22,0.3)]">
-              <Shield className="w-3.5 h-3.5 text-white" />
-            </div>
-            <span className="font-semibold text-[15px] text-white tracking-tight">Sentinel</span>
-          </a>
+  const injectFailure = () => {
+    setIsAnalyzing(true)
+    setTelemetryEvents([])
+    const events = [
+      `◉ 14:32:01 ${selectedService} alert firing — ${selectedFailure} detected`,
+      `◉ 14:32:03 anomaly scorer: z-score 3.2σ above baseline`,
+      `◉ 14:32:05 rules engine: 2 pattern matches found`,
+      `◉ 14:32:07 RAG: querying similar past incidents...`,
+      `◉ 14:32:09 correlating signals across affected services`,
+      `◉ 14:32:11 LLM synthesis: generating root cause hypothesis`,
+      `◉ 14:32:13 verdict ready — confidence score calculated`,
+    ]
+    events.forEach((event, i) => {
+      setTimeout(() => {
+        setTelemetryEvents(prev => [...prev, event])
+        if (i === events.length - 1) setTimeout(() => setIsAnalyzing(false), 500)
+      }, i * 800)
+    })
+  }
 
-          <nav className="hidden md:flex items-center gap-1">
-            {['Features', 'Demo', 'How it works'].map((label) => (
-              <a
+  return (
+    <LazyMotion features={domAnimation}>
+    <div className="min-h-screen text-white overflow-x-hidden" style={{ background: '#09090b', fontFamily: "'Inter', sans-serif" }}>
+      {/* Background */}
+      <div className="fixed inset-0 overflow-hidden pointer-events-none">
+        <div
+          className="absolute -top-[40%] left-1/2 -translate-x-1/2 w-[1000px] h-[800px] rounded-full blur-[140px] opacity-70"
+          style={{ background: 'radial-gradient(circle, rgba(99,102,241,0.12) 0%, rgba(139,92,246,0.08) 40%, transparent 70%)' }}
+        />
+        <div
+          className="absolute inset-0 opacity-[0.04]"
+          style={{
+            backgroundImage: `linear-gradient(to right, #ffffff 1px, transparent 1px), linear-gradient(to bottom, #ffffff 1px, transparent 1px)`,
+            backgroundSize: '64px 64px',
+          }}
+        />
+        <div
+          className="absolute w-[600px] h-[600px] rounded-full transition-all duration-300 ease-out pointer-events-none"
+          style={{
+            background: 'radial-gradient(circle, rgba(99,102,241,0.04) 0%, transparent 60%)',
+            left: mousePosition.x - 300,
+            top: mousePosition.y - 300,
+          }}
+        />
+        <div className="absolute inset-0 bg-gradient-to-b from-transparent via-[#09090b]/40 to-[#09090b]" />
+      </div>
+
+      {/* ── NAVBAR ── */}
+      <motion.nav
+        className="fixed top-4 inset-x-0 z-50 px-6"
+        initial={{ y: -80, opacity: 0 }}
+        animate={{ y: 0, opacity: 1 }}
+        transition={{ duration: 0.5, ease: 'easeOut' }}
+      >
+        <div
+          className="max-w-5xl mx-auto px-6 py-3 rounded-xl border flex items-center justify-between"
+          style={{
+            background: 'rgba(15,15,20,0.85)',
+            borderColor: 'rgba(255,255,255,0.08)',
+            backdropFilter: 'blur(20px)',
+          }}
+        >
+          <motion.div className="flex items-center gap-2.5" whileHover={{ scale: 1.02 }}>
+            <Shield className="w-5 h-5 text-indigo-500" />
+            <span className="font-bold text-white tracking-tight">Sentinel</span>
+          </motion.div>
+
+          <div className="hidden md:flex items-center gap-8 text-sm font-medium">
+            {['Features', 'Demo', 'How it works'].map(label => (
+              <motion.a
                 key={label}
-                href={`#${label.toLowerCase().replace(/\s/g, '-')}`}
-                className="px-3.5 py-1.5 text-[13px] text-white/50 hover:text-white rounded-lg hover:bg-white/[0.04] transition-all"
+                href={`#${label.toLowerCase().replace(/ /g, '-')}`}
+                className="text-zinc-400 hover:text-white transition-colors"
+                whileHover={{ y: -1 }}
               >
                 {label}
-              </a>
+              </motion.a>
             ))}
-          </nav>
+          </div>
 
-          <div className="hidden md:flex items-center gap-3">
-            <a href="/login" className="text-[13px] text-white/50 hover:text-white transition-colors">
+          <div className="flex items-center gap-4 font-medium">
+            <motion.a
+              href="/login"
+              className="text-sm text-zinc-400 hover:text-white transition-colors hidden md:block"
+              whileHover={{ scale: 1.02 }}
+            >
               Sign in
-            </a>
-            <a
+            </motion.a>
+            <motion.a
               href="/register"
-              className="px-4 py-2 text-[13px] font-medium rounded-full bg-white text-black hover:bg-white/90 transition-all shadow-[0_0_20px_rgba(255,255,255,0.1)]"
+              className="px-5 py-2.5 text-white text-sm rounded-xl font-medium"
+              style={{ background: 'linear-gradient(180deg, #6366F1 0%, #4F46E5 100%)', boxShadow: '0 0 20px rgba(99,102,241,0.4), inset 0 1px 0 rgba(255,255,255,0.2), 0 4px 14px rgba(99,102,241,0.3)' }}
+              whileHover={{ scale: 1.02, filter: 'brightness(1.1)' }}
+              whileTap={{ scale: 0.98 }}
             >
               Get Started
-            </a>
+            </motion.a>
           </div>
-
-          <button onClick={() => setOpen(!open)} className="md:hidden text-white/60" aria-label="Menu">
-            {open ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-          </button>
         </div>
+      </motion.nav>
 
-        <AnimatePresence>
-          {open && (
-            <motion.div
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: 'auto' }}
-              exit={{ opacity: 0, height: 0 }}
-              className="md:hidden border-t border-white/[0.06] px-5 pb-4 pt-2 space-y-1"
-            >
-              {['Features', 'Demo', 'How it works'].map((label) => (
-                <a key={label} href={`#${label.toLowerCase().replace(/\s/g, '-')}`} onClick={() => setOpen(false)}
-                  className="block px-3 py-2 text-sm text-white/60 hover:text-white rounded-lg hover:bg-white/5">
-                  {label}
-                </a>
-              ))}
-              <a href="/register" className="block mt-3 text-center px-4 py-2.5 rounded-full bg-white text-black text-sm font-medium">
-                Get Started
-              </a>
+      {/* ── HERO ── */}
+      <section className="relative min-h-screen flex items-center justify-center px-8 pt-32 pb-20">
+        <div className="max-w-4xl mx-auto text-center space-y-8 relative z-10">
+          {/* Badge */}
+          <motion.div
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, delay: 0.2 }}
+            className="inline-flex items-center gap-2.5 px-4 py-1.5 rounded-full border border-indigo-500/20 bg-indigo-500/10 backdrop-blur-md shadow-[0_4px_24px_rgba(99,102,241,0.12)]"
+          >
+            <motion.div animate={{ scale: [1, 1.2, 1], opacity: [0.7, 1, 0.7] }} transition={{ duration: 2, repeat: Infinity }}>
+              <Circle className="w-1.5 h-1.5 fill-indigo-400 text-indigo-400" />
             </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
-    </motion.header>
-  )
-}
+            <span className="text-xs text-indigo-300 font-semibold tracking-wide uppercase">Chaos Engineering v2.0</span>
+          </motion.div>
 
-/* =========================================================
-   HERO — Cinematic, minimal, high-impact
-   ========================================================= */
-
-function Hero() {
-  return (
-    <section className="relative min-h-[100vh] flex items-center justify-center overflow-hidden">
-      {/* Ambient gradient orbs */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-1/4 left-1/4 w-[600px] h-[600px] rounded-full bg-orange-500/[0.07] blur-[120px] animate-blob" />
-        <div className="absolute bottom-1/4 right-1/4 w-[500px] h-[500px] rounded-full bg-cyan-500/[0.05] blur-[100px] animate-blob" style={{ animationDelay: '6s' }} />
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] rounded-full bg-purple-500/[0.03] blur-[150px]" />
-      </div>
-
-      {/* Subtle grid */}
-      <div className="absolute inset-0 bg-dot-grid opacity-40" />
-
-      {/* Radial vignette */}
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_0%,transparent_50%,rgba(0,0,0,0.8)_100%)]" />
-
-      <div className="relative z-10 max-w-5xl mx-auto px-4 text-center pt-32 pb-24">
-        {/* Announcement pill */}
-        <motion.div
-          initial={{ opacity: 0, y: 20, scale: 0.95 }}
-          animate={{ opacity: 1, y: 0, scale: 1 }}
-          transition={{ duration: 0.6, delay: 0.4 }}
-          className="inline-flex items-center gap-2 px-4 py-2 rounded-full border border-white/[0.08] bg-white/[0.03] backdrop-blur-sm mb-8"
-        >
-          <span className="flex h-2 w-2 relative">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-75" />
-            <span className="relative inline-flex rounded-full h-2 w-2 bg-orange-500" />
-          </span>
-          <span className="text-[13px] text-white/70">Now with Chaos Engineering v2.0</span>
-          <ArrowRight className="w-3 h-3 text-white/40" />
-        </motion.div>
-
-        {/* Headline */}
-        <motion.h1
-          initial={{ opacity: 0, y: 30 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.8, delay: 0.5, ease: [0.25, 0.46, 0.45, 0.94] }}
-          className="text-[clamp(2.5rem,7vw,5.5rem)] font-semibold leading-[1.05] tracking-[-0.03em] text-white"
-        >
-          Incidents diagnosed
-          <br />
-          <span className="bg-gradient-to-r from-orange-400 via-orange-300 to-amber-400 bg-clip-text text-transparent">
-            before you get paged
-          </span>
-        </motion.h1>
-
-        {/* Subheadline */}
-        <motion.p
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.7, delay: 0.7 }}
-          className="mt-6 text-lg sm:text-xl text-white/50 max-w-2xl mx-auto leading-relaxed"
-        >
-          Sentinel-SRE correlates signals, runs chaos simulations, and delivers
-          root cause verdicts with calibrated confidence — in seconds, not hours.
-        </motion.p>
-
-        {/* CTA buttons */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6, delay: 0.9 }}
-          className="mt-10 flex flex-wrap items-center justify-center gap-4"
-        >
-          <a
-            href="/register"
-            className="group inline-flex items-center gap-2 px-7 py-3.5 rounded-full bg-white text-black text-sm font-semibold hover:shadow-[0_0_40px_rgba(255,255,255,0.15)] transition-all duration-300 hover:-translate-y-0.5"
+          {/* Headline */}
+          <motion.h1
+            className="text-5xl sm:text-7xl tracking-tighter leading-[1.05] font-semibold"
+            initial={{ opacity: 0, y: 24 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.7, delay: 0.3 }}
           >
-            Start for free
-            <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-0.5" />
-          </a>
-          <a
-            href="#demo"
-            className="inline-flex items-center gap-2 px-7 py-3.5 rounded-full border border-white/[0.12] text-white/80 text-sm font-medium hover:bg-white/[0.04] hover:border-white/20 transition-all"
+            <span className="text-white">Diagnose incidents</span>
+            <br />
+            <span className="bg-clip-text text-transparent bg-gradient-to-r from-indigo-400 to-indigo-600">before you get paged</span>
+          </motion.h1>
+
+          <motion.p
+            className="text-lg max-w-2xl mx-auto leading-relaxed text-zinc-400"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.7, delay: 0.55 }}
           >
-            <Flame className="w-4 h-4 text-orange-400" />
-            Live Demo
-          </a>
-        </motion.div>
+            Sentinel-SRE correlates signals, runs chaos simulations, and delivers root cause verdicts
+            with <span className="text-white font-medium">calibrated confidence</span> — in seconds, not hours.
+          </motion.p>
 
-        {/* Social proof */}
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 0.6, delay: 1.2 }}
-          className="mt-16 flex flex-wrap items-center justify-center gap-8 text-[13px] text-white/30"
-        >
-          {['Prometheus', 'Grafana', 'Kubernetes', 'Datadog', 'PagerDuty'].map((name) => (
-            <span key={name} className="hover:text-white/50 transition-colors cursor-default">{name}</span>
-          ))}
-        </motion.div>
-      </div>
+          {/* CTA buttons */}
+          <motion.div
+            className="flex flex-col sm:flex-row items-center justify-center gap-4 pt-4"
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, delay: 0.75 }}
+          >
+            <motion.a
+              href="/register"
+              className="px-7 py-3.5 rounded-xl flex items-center gap-2 font-semibold text-sm text-white w-full sm:w-auto justify-center"
+              style={{ background: 'linear-gradient(180deg, #6366F1 0%, #4F46E5 100%)', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.2), 0 8px 30px rgba(99,102,241,0.25)' }}
+              whileHover={{ scale: 1.02, filter: 'brightness(1.15)' }}
+              whileTap={{ scale: 0.98 }}
+            >
+              Start for free
+              <ArrowRight className="w-4 h-4" />
+            </motion.a>
+            <motion.a
+              href="#demo"
+              className="px-7 py-3.5 border border-white/10 text-zinc-300 rounded-xl flex items-center gap-2 text-sm font-medium hover:bg-white/5 transition-colors w-full sm:w-auto justify-center backdrop-blur-md"
+              style={{ boxShadow: '0 4px 20px rgba(0,0,0,0.2)' }}
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+            >
+              <Terminal className="w-4 h-4" />
+              Live Demo
+            </motion.a>
+          </motion.div>
 
-      {/* Bottom gradient fade */}
-      <div className="absolute bottom-0 left-0 right-0 h-40 bg-gradient-to-t from-black to-transparent pointer-events-none" />
-    </section>
-  )
-}
-
-/* =========================================================
-   FEATURES — Bento grid layout
-   ========================================================= */
-
-function Features() {
-  const features = [
-    {
-      icon: Brain,
-      title: 'AI Root Cause Analysis',
-      desc: 'Multi-model LLM ensemble correlates logs, metrics, and traces to surface the true cause.',
-      gradient: 'from-orange-500/20 to-orange-600/5',
-      iconColor: 'text-orange-400',
-      span: 'md:col-span-2',
-    },
-    {
-      icon: GitBranch,
-      title: 'Chaos Engineering',
-      desc: 'Inject failures safely. Validate resilience before users feel it.',
-      gradient: 'from-pink-500/15 to-pink-600/5',
-      iconColor: 'text-pink-400',
-      span: '',
-    },
-    {
-      icon: Gauge,
-      title: 'Confidence Scoring',
-      desc: 'Every verdict ships with a calibrated confidence score.',
-      gradient: 'from-emerald-500/15 to-emerald-600/5',
-      iconColor: 'text-emerald-400',
-      span: '',
-    },
-    {
-      icon: RefreshCw,
-      title: 'Self-Improving RAG',
-      desc: 'Engineers rate explanations. The system gets smarter with every incident.',
-      gradient: 'from-cyan-500/15 to-cyan-600/5',
-      iconColor: 'text-cyan-400',
-      span: '',
-    },
-    {
-      icon: FileText,
-      title: 'Auto Postmortems',
-      desc: 'Structured, blameless postmortems generated in seconds. Ready to publish.',
-      gradient: 'from-violet-500/15 to-violet-600/5',
-      iconColor: 'text-violet-400',
-      span: '',
-    },
-    {
-      icon: Layers,
-      title: 'Unified Telemetry',
-      desc: 'Prometheus, Datadog, OpenTelemetry — Sentinel reasons across all of it.',
-      gradient: 'from-amber-500/15 to-amber-600/5',
-      iconColor: 'text-amber-400',
-      span: 'md:col-span-2',
-    },
-  ]
-
-  return (
-    <section id="features" className="relative py-32">
-      <div className="max-w-6xl mx-auto px-4">
-        <FadeIn>
-          <div className="text-center mb-16">
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-white/[0.08] bg-white/[0.02] text-[12px] text-white/60 mb-4">
-              <Zap className="w-3 h-3 text-orange-400" />
-              Core capabilities
-            </div>
-            <h2 className="text-4xl sm:text-5xl font-semibold tracking-tight text-white">
-              Everything you need to
-              <br />
-              <span className="text-white/60">ship with confidence</span>
-            </h2>
-          </div>
-        </FadeIn>
-
-        <div className="grid md:grid-cols-3 gap-4">
-          {features.map((f, i) => (
-            <FadeIn key={f.title} delay={i * 0.05} className={f.span}>
-              <div className={`group relative h-full rounded-2xl border border-white/[0.06] bg-gradient-to-br ${f.gradient} p-6 sm:p-8 transition-all duration-500 hover:border-white/[0.12] hover:-translate-y-0.5 overflow-hidden`}>
-                {/* Hover glow */}
-                <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-700 bg-gradient-to-br from-white/[0.02] to-transparent" />
-                <div className="relative">
-                  <div className={`w-10 h-10 rounded-xl border border-white/[0.08] bg-white/[0.03] flex items-center justify-center mb-4`}>
-                    <f.icon className={`w-5 h-5 ${f.iconColor}`} />
-                  </div>
-                  <h3 className="text-lg font-semibold text-white mb-2">{f.title}</h3>
-                  <p className="text-sm text-white/50 leading-relaxed">{f.desc}</p>
-                </div>
-              </div>
-            </FadeIn>
-          ))}
-        </div>
-      </div>
-    </section>
-  )
-}
-
-/* =========================================================
-   HOW IT WORKS — Horizontal timeline
-   ========================================================= */
-
-function HowItWorks() {
-  const steps = [
-    { icon: Radio, title: 'Ingest', desc: 'Stream logs, metrics, traces from your stack.' },
-    { icon: Activity, title: 'Detect', desc: 'Baseline-aware anomaly detection catches drift.' },
-    { icon: Brain, title: 'Analyze', desc: 'Multi-model AI ranks hypotheses and delivers a verdict.' },
-    { icon: RefreshCw, title: 'Learn', desc: 'Feedback loop refines reasoning every cycle.' },
-  ]
-
-  return (
-    <section id="how-it-works" className="relative py-32">
-      <div className="max-w-6xl mx-auto px-4">
-        <FadeIn>
-          <div className="text-center mb-16">
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-white/[0.08] bg-white/[0.02] text-[12px] text-white/60 mb-4">
-              <Cpu className="w-3 h-3 text-orange-400" />
-              How it works
-            </div>
-            <h2 className="text-4xl sm:text-5xl font-semibold tracking-tight text-white">
-              Signal to postmortem
-              <br />
-              <span className="text-white/60">in four steps</span>
-            </h2>
-          </div>
-        </FadeIn>
-
-        <div className="relative">
-          {/* Connecting line */}
-          <div className="hidden lg:block absolute top-12 left-[12%] right-[12%] h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
-
-          <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-8">
-            {steps.map((step, i) => (
-              <FadeIn key={step.title} delay={i * 0.1}>
-                <div className="text-center lg:text-left">
-                  <div className="relative inline-flex items-center justify-center w-16 h-16 rounded-2xl border border-white/[0.08] bg-white/[0.02] mb-5">
-                    <step.icon className="w-6 h-6 text-white/80" />
-                    <span className="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-orange-500 text-[11px] font-bold text-white flex items-center justify-center shadow-lg">
-                      {i + 1}
-                    </span>
-                  </div>
-                  <h3 className="text-base font-semibold text-white mb-1.5">{step.title}</h3>
-                  <p className="text-sm text-white/45 leading-relaxed">{step.desc}</p>
-                </div>
-              </FadeIn>
+          {/* Integrations */}
+          <motion.div
+            className="flex flex-wrap items-center justify-center gap-6 sm:gap-10 pt-16"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.8, delay: 1 }}
+          >
+            <span className="text-xs text-zinc-600 font-semibold uppercase tracking-wider w-full sm:w-auto mb-2 sm:mb-0">Integrations</span>
+            {['Prometheus', 'Slack', 'Microsoft Teams'].map((name, i) => (
+              <motion.span
+                key={name}
+                className="text-sm font-medium text-zinc-500 hover:text-white transition-colors cursor-default"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: 0.4, delay: 1.1 + i * 0.08 }}
+              >
+                {name}
+              </motion.span>
             ))}
+          </motion.div>
+        </div>
+      </section>
+
+      {/* ── FEATURES ── */}
+      <section id="features" className="relative py-28 px-8 border-t border-white/5">
+        <div className="max-w-6xl mx-auto">
+          <motion.div className="mb-16" initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ duration: 0.6 }}>
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-indigo-500/20 bg-indigo-500/5 mb-6">
+              <Zap className="w-3.5 h-3.5 text-indigo-400" />
+              <span className="text-xs text-indigo-200 font-semibold tracking-wide uppercase">Core Capabilities</span>
+            </div>
+            <h2 className="text-4xl sm:text-5xl tracking-tight leading-tight font-semibold text-white">
+              Everything you need to<br />
+              <span className="text-zinc-500">ship with confidence.</span>
+            </h2>
+          </motion.div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+            <FeatureCard delay={0} className="md:col-span-2" icon={Brain} title="AI Root Cause Analysis" description="Multi-model ensemble ranks hypotheses, tests them with chaos simulations, and delivers verdicts with calibrated confidence scores." accent />
+            <FeatureCard delay={0.08} icon={GitBranch} title="Chaos Engineering" description="Trigger synthetic failure scenarios to test your AI analysis pipeline and validate detection accuracy." />
+            <FeatureCard delay={0.14} icon={Gauge} title="Confidence Scoring" description="Calibrated confidence intervals help you know exactly when to trust AI verdicts vs escalate." />
+            <FeatureCard delay={0.2} icon={RefreshCw} title="Self-Improving RAG" description="Every postmortem and false positive refines the reasoning engine exclusively for your stack." />
+            <FeatureCard delay={0.26} icon={FileText} title="Auto Postmortems" description="Generate production-ready incident reports with timeline, impact analysis, and remediation steps." />
+            <FeatureCard delay={0.32} className="md:col-span-2" icon={Layers} title="Prometheus + Slack/Teams" description="Ingest alerts via Prometheus Alertmanager webhook. Dispatch postmortems and interactive actions to Slack and Microsoft Teams." />
           </div>
         </div>
-      </div>
-    </section>
-  )
-}
+      </section>
 
-/* =========================================================
-   CHAOS DEMO — Interactive simulator
-   ========================================================= */
-
-function ChaosDemo() {
-  const services = [
-    { id: 'api-gateway', label: 'api-gateway', desc: 'Edge routing · 12 pods' },
-    { id: 'checkout-service', label: 'checkout-service', desc: 'Payment flow · 8 pods' },
-    { id: 'auth-service', label: 'auth-service', desc: 'OAuth + JWT · 6 pods' },
-    { id: 'search-service', label: 'search-service', desc: 'ElasticSearch · 10 pods' },
-  ]
-
-  const failures = [
-    { id: 'network-latency', label: 'Network Latency', icon: Network, desc: '+500ms p99' },
-    { id: 'db-pool-exhaust', label: 'DB Pool Exhaustion', icon: Database, desc: 'Max conns hit' },
-    { id: 'cpu-spike', label: 'CPU Spike', icon: Cpu, desc: '95%+ sustained' },
-    { id: 'memory-leak', label: 'Memory Leak', icon: MemoryStick, desc: '+80MB/min' },
-    { id: 'service-crash', label: 'Pod Restart Loop', icon: ServerCrash, desc: 'CrashLoopBackOff' },
-  ]
-
-  const rcaMap: Record<string, any> = {
-    'api-gateway|network-latency': {
-      cause: 'Upstream DNS resolver in us-east-1 experiencing 500ms timeouts. Route53 health checks flapping, forcing gateway retries.',
-      confidence: 91, impact: 'p99 4.2s', blast: '12% of requests',
-      signals: ['DNS failures +340%', 'Gateway retries +210%', 'TCP re-transmits 4.8%'],
-    },
-    'api-gateway|db-pool-exhaust': {
-      cause: 'Gateway connection pool saturated after v4.2 rollout introduced synchronous DB lookup in auth middleware. Connections leak on error path.',
-      confidence: 96, impact: '5xx 14.2%', blast: 'All downstream',
-      signals: ['DB conn 1000/1000', 'Auth latency +820%', 'Middleware p95 3.1s'],
-    },
-    'checkout-service|db-pool-exhaust': {
-      cause: 'Primary Postgres saturated by long-running analytics query in v3.9. Pool queue depth exceeds 200.',
-      confidence: 94, impact: 'Checkout fail 8.7%', blast: 'Revenue path',
-      signals: ['DB conn 980/1000', 'Query p99 12s', 'Pool wait 4.2s'],
-    },
-    'auth-service|memory-leak': {
-      cause: 'Session cache TTL regression in v3.12 — entries marked "evicted" retained by listener closure. Heap grows ~80MB/min.',
-      confidence: 92, impact: 'GC pauses 180ms', blast: 'Login latency +240%',
-      signals: ['Heap 78%', 'GC frequency +310%', 'Evict-retained 42k objects'],
-    },
-    'search-service|cpu-spike': {
-      cause: 'ElasticSearch query plan regressed after mapping change — full scan on 2TB index.',
-      confidence: 93, impact: 'Search p99 8s', blast: 'Discovery pages',
-      signals: ['CPU 97%', 'Doc scan 2.1B/s', 'Hot shard imbalance 4.2x'],
-    },
-    default: {
-      cause: 'Rolling deploy correlates with error spike. Cross-referencing telemetry suggests misconfigured env var cascading through dependent services.',
-      confidence: 84, impact: 'Error +180%', blast: 'Partial',
-      signals: ['Deploy t-120s', 'Error bursts correlated', 'Health checks 3/5'],
-    },
-  }
-
-  const [service, setService] = useState('checkout-service')
-  const [failure, setFailure] = useState('db-pool-exhaust')
-  const [phase, setPhase] = useState<'idle' | 'running' | 'done'>('idle')
-  const [events, setEvents] = useState<{ time: string; text: string; type: string }[]>([])
-  const timers = useRef<NodeJS.Timeout[]>([])
-
-  useEffect(() => () => timers.current.forEach(clearTimeout), [])
-
-  const result = rcaMap[`${service}|${failure}`] || rcaMap.default
-
-  const run = () => {
-    if (phase === 'running') return
-    setEvents([])
-    setPhase('running')
-    timers.current.forEach(clearTimeout)
-    timers.current = []
-
-    const t = (ms: number, fn: () => void) => { timers.current.push(setTimeout(fn, ms)) }
-    t(300, () => setEvents(e => [...e, { time: '0.3s', type: 'inject', text: `Injecting failure into ${service}` }]))
-    t(900, () => setEvents(e => [...e, { time: '0.9s', type: 'signal', text: 'Anomaly detector triggered' }]))
-    t(1500, () => setEvents(e => [...e, { time: '1.5s', type: 'signal', text: 'Correlated 3 services, 14 metrics' }]))
-    t(2200, () => setEvents(e => [...e, { time: '2.2s', type: 'ai', text: 'AI ranking 7 hypotheses...' }]))
-    t(3200, () => setEvents(e => [...e, { time: '3.2s', type: 'ai', text: 'Top hypothesis confirmed via RAG' }]))
-    t(3800, () => { setEvents(e => [...e, { time: '3.8s', type: 'done', text: 'Root cause verdict ready' }]); setPhase('done') })
-  }
-
-  const isRunning = phase === 'running'
-
-  return (
-    <section id="demo" className="relative py-32">
-      <div className="max-w-6xl mx-auto px-4">
-        <FadeIn>
-          <div className="text-center mb-16">
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-white/[0.08] bg-white/[0.02] text-[12px] text-white/60 mb-4">
-              <Flame className="w-3 h-3 text-orange-400" />
-              Interactive demo
+      {/* ── HOW IT WORKS ── */}
+      <section id="how-it-works" className="relative py-28 px-8 border-t border-white/5" style={{ background: 'linear-gradient(to bottom, #09090b 0%, rgba(17,17,19,0.5) 100%)' }}>
+        <div className="max-w-5xl mx-auto">
+          <motion.div className="mb-20" initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }}>
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-indigo-500/20 bg-indigo-500/5 mb-6">
+              <Activity className="w-3.5 h-3.5 text-indigo-400" />
+              <span className="text-xs text-indigo-200 font-semibold tracking-wide uppercase">Workflow</span>
             </div>
-            <h2 className="text-4xl sm:text-5xl font-semibold tracking-tight text-white">
-              Inject a failure.
-              <br />
-              <span className="text-white/60">Watch AI diagnose it.</span>
+            <h2 className="text-4xl sm:text-5xl tracking-tight leading-tight font-semibold text-white">
+              Signal to postmortem<br />
+              <span className="text-indigo-400">in four simple steps.</span>
             </h2>
-          </div>
-        </FadeIn>
+          </motion.div>
 
-        <FadeIn delay={0.1}>
-          <div className="rounded-2xl border border-white/[0.06] bg-white/[0.01] overflow-hidden shadow-[0_20px_80px_-20px_rgba(0,0,0,0.5)]">
+          <div className="relative">
+            <motion.div
+              className="absolute top-6 left-6 right-6 h-px hidden md:block"
+              style={{ background: 'linear-gradient(90deg, rgba(99,102,241,0.5), rgba(99,102,241,0.1) 50%, rgba(99,102,241,0.5))' }}
+              initial={{ scaleX: 0 }}
+              whileInView={{ scaleX: 1 }}
+              viewport={{ once: true }}
+              transition={{ duration: 1.2, ease: 'easeOut' }}
+            />
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-8 relative">
+              {[
+                { num: '01', title: 'Ingest', desc: 'Stream logs, metrics, traces from your stack in real time.', icon: Database },
+                { num: '02', title: 'Detect', desc: 'Baseline-aware anomaly detection catches drift instantly.', icon: TrendingUp },
+                { num: '03', title: 'Analyze', desc: 'Multi-model AI ranks hypotheses and delivers a verdict.', icon: Brain },
+                { num: '04', title: 'Learn', desc: 'Feedback loop refines reasoning on every single cycle.', icon: RefreshCw },
+              ].map((step, i) => (
+                <motion.div
+                  key={i}
+                  className="group cursor-default"
+                  initial={{ opacity: 0, y: 24 }}
+                  whileInView={{ opacity: 1, y: 0 }}
+                  viewport={{ once: true }}
+                  transition={{ duration: 0.5, delay: i * 0.12 }}
+                >
+                  <div className="w-12 h-12 rounded-full border border-zinc-800 bg-[#09090b] flex items-center justify-center mb-6 relative z-10 group-hover:border-indigo-500/50 group-hover:bg-indigo-500/10 transition-all duration-300 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
+                    <span className="text-sm font-bold text-zinc-500 group-hover:text-indigo-400 transition-colors">{step.num}</span>
+                  </div>
+                  <div className="w-10 h-10 rounded-xl border border-zinc-800 bg-[#18181b] flex items-center justify-center mb-5 group-hover:border-indigo-500/30 group-hover:bg-indigo-500/10 transition-all shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
+                    <step.icon className="w-5 h-5 text-zinc-400 group-hover:text-indigo-400 transition-colors" />
+                  </div>
+                  <h3 className="text-xl mb-2 font-semibold text-white">{step.title}</h3>
+                  <p className="text-zinc-400 text-sm leading-relaxed">{step.desc}</p>
+                </motion.div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ── CHAOS DEMO ── */}
+      <section id="demo" className="relative py-28 px-8 border-t border-white/5">
+        <div className="max-w-5xl mx-auto relative z-10">
+          <motion.div className="mb-16" initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }}>
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-indigo-500/20 bg-indigo-500/5 mb-6">
+              <Terminal className="w-3.5 h-3.5 text-indigo-400" />
+              <span className="text-xs text-indigo-200 font-semibold tracking-wide uppercase">Interactive Demo</span>
+            </div>
+            <h2 className="text-4xl sm:text-5xl tracking-tight leading-tight font-semibold">
+              <span className="text-indigo-400">Inject a failure.</span><br />
+              <span className="text-white">Watch AI diagnose it.</span>
+            </h2>
+          </motion.div>
+
+          <motion.div
+            className="rounded-2xl border shadow-2xl overflow-hidden backdrop-blur-xl"
+            style={{
+              background: 'linear-gradient(160deg, rgba(255,255,255,0.03) 0%, rgba(17,17,19,0.9) 100%)',
+              borderColor: 'rgba(255,255,255,0.08)',
+              boxShadow: '0 24px 60px -12px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.05)',
+            }}
+            initial={{ opacity: 0, y: 32 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            transition={{ duration: 0.7 }}
+          >
             {/* Window chrome */}
-            <div className="flex items-center gap-2 px-5 py-3 border-b border-white/[0.06] bg-black/40">
-              <div className="flex gap-1.5">
-                <div className="w-3 h-3 rounded-full bg-white/10" />
-                <div className="w-3 h-3 rounded-full bg-white/10" />
-                <div className="w-3 h-3 rounded-full bg-white/10" />
+            <div className="border-b px-5 py-3.5 flex items-center justify-between" style={{ borderColor: 'rgba(255,255,255,0.08)', background: '#18181b' }}>
+              <div className="flex items-center gap-4">
+                <div className="flex gap-2">
+                  <div className="w-3 h-3 rounded-full bg-zinc-800" />
+                  <div className="w-3 h-3 rounded-full bg-zinc-800" />
+                  <div className="w-3 h-3 rounded-full bg-zinc-800" />
+                </div>
+                <span className="text-xs text-zinc-500 font-medium tracking-wide hidden sm:block font-mono">sentinel ~ chaos-lab</span>
               </div>
-              <div className="flex-1 text-center text-[11px] text-white/30 font-mono">chaos-lab</div>
-              <div className={`text-[11px] px-2 py-0.5 rounded-full ${
-                phase === 'done' ? 'bg-emerald-500/10 text-emerald-400' :
-                isRunning ? 'bg-orange-500/10 text-orange-400' : 'bg-white/5 text-white/40'
-              }`}>
-                {phase === 'done' ? '● Complete' : isRunning ? '● Analyzing' : '○ Ready'}
+              <div className="flex items-center gap-2.5">
+                <motion.div animate={{ scale: isAnalyzing ? [1, 1.3, 1] : 1 }} transition={{ duration: 1, repeat: isAnalyzing ? Infinity : 0 }}>
+                  <Circle className={`w-2 h-2 ${isAnalyzing ? 'fill-rose-500 text-rose-500' : 'fill-indigo-500 text-indigo-500'}`} />
+                </motion.div>
+                <span className="text-xs text-zinc-500 font-medium font-mono">{isAnalyzing ? 'Analyzing...' : 'Ready'}</span>
               </div>
             </div>
 
-            <div className="grid lg:grid-cols-5 min-h-[520px]">
+            <div className="flex flex-col lg:flex-row">
               {/* Controls */}
-              <div className="lg:col-span-2 p-6 border-b lg:border-b-0 lg:border-r border-white/[0.06] space-y-5 bg-black/20">
+              <div className="w-full lg:w-2/5 border-b lg:border-b-0 lg:border-r p-5 sm:p-6 space-y-6" style={{ background: 'rgba(0,0,0,0.2)', borderColor: 'rgba(255,255,255,0.06)' }}>
                 <div>
-                  <label className="block text-[11px] font-medium uppercase tracking-widest text-white/30 mb-2.5">Service</label>
-                  <div className="space-y-1.5">
-                    {services.map(s => (
-                      <button key={s.id} onClick={() => !isRunning && setService(s.id)} disabled={isRunning}
-                        className={`w-full text-left rounded-xl px-3 py-2.5 border transition-all text-sm ${
-                          service === s.id ? 'border-orange-500/30 bg-orange-500/[0.06]' : 'border-white/[0.05] hover:bg-white/[0.03]'
-                        } ${isRunning ? 'opacity-50 cursor-not-allowed' : ''}`}>
-                        <span className="font-mono text-white/90">{s.label}</span>
-                        <span className="block text-[11px] text-white/35 mt-0.5">{s.desc}</span>
+                  <label className="block text-xs font-semibold text-zinc-500 mb-3 uppercase tracking-wider">Target Service</label>
+                  <div className="space-y-2">
+                    {[
+                      { id: 'checkout-ui', icon: Database, label: 'checkout-ui' },
+                      { id: 'auth-service', icon: Server, label: 'auth-service' },
+                      { id: 'order-processor', icon: Network, label: 'order-processor' },
+                      { id: 'api-gateway', icon: Activity, label: 'api-gateway' },
+                    ].map(s => (
+                      <button
+                        key={s.id}
+                        onClick={() => setSelectedService(s.id)}
+                        className="w-full px-4 py-3 rounded-xl border text-sm flex items-center gap-3 transition-all duration-200"
+                        style={{
+                          borderColor: selectedService === s.id ? 'rgba(99,102,241,0.4)' : 'rgba(255,255,255,0.03)',
+                          background: selectedService === s.id ? 'rgba(99,102,241,0.1)' : 'rgba(255,255,255,0.02)',
+                          color: selectedService === s.id ? '#fff' : '#A1A1AA',
+                        }}
+                      >
+                        <s.icon className={`w-4 h-4 flex-shrink-0 ${selectedService === s.id ? 'text-indigo-400' : 'text-zinc-500'}`} />
+                        <span className="font-medium text-xs font-mono">{s.label}</span>
                       </button>
                     ))}
                   </div>
                 </div>
 
                 <div>
-                  <label className="block text-[11px] font-medium uppercase tracking-widest text-white/30 mb-2.5">Failure mode</label>
-                  <div className="space-y-1.5">
-                    {failures.map(f => (
-                      <button key={f.id} onClick={() => !isRunning && setFailure(f.id)} disabled={isRunning}
-                        className={`w-full text-left rounded-xl px-3 py-2.5 border transition-all flex items-center gap-2.5 ${
-                          failure === f.id ? 'border-orange-500/30 bg-orange-500/[0.06]' : 'border-white/[0.05] hover:bg-white/[0.03]'
-                        } ${isRunning ? 'opacity-50 cursor-not-allowed' : ''}`}>
-                        <f.icon className={`w-4 h-4 ${failure === f.id ? 'text-orange-400' : 'text-white/40'}`} />
-                        <div>
-                          <span className="text-sm text-white/90">{f.label}</span>
-                          <span className="block text-[11px] text-white/35">{f.desc}</span>
-                        </div>
+                  <label className="block text-xs font-semibold text-zinc-500 mb-3 uppercase tracking-wider">Failure Mode</label>
+                  <div className="space-y-2">
+                    {[
+                      { id: 'latency', icon: Activity, label: 'High Latency' },
+                      { id: 'timeout', icon: AlertCircle, label: 'Timeout Spike' },
+                      { id: 'error-rate', icon: AlertCircle, label: 'Error Rate' },
+                      { id: 'cpu', icon: Server, label: 'CPU Throttle' },
+                      { id: 'network', icon: Network, label: 'Network Partition' },
+                    ].map(f => (
+                      <button
+                        key={f.id}
+                        onClick={() => setSelectedFailure(f.id)}
+                        className="w-full px-4 py-3 rounded-xl border text-sm flex items-center gap-3 transition-all duration-200"
+                        style={{
+                          borderColor: selectedFailure === f.id ? 'rgba(99,102,241,0.4)' : 'rgba(255,255,255,0.03)',
+                          background: selectedFailure === f.id ? 'rgba(99,102,241,0.1)' : 'rgba(255,255,255,0.02)',
+                          color: selectedFailure === f.id ? '#fff' : '#A1A1AA',
+                        }}
+                      >
+                        <f.icon className={`w-4 h-4 flex-shrink-0 ${selectedFailure === f.id ? 'text-indigo-400' : 'text-zinc-500'}`} />
+                        <span className="font-medium text-sm">{f.label}</span>
                       </button>
                     ))}
                   </div>
                 </div>
 
-                <button onClick={run} disabled={isRunning}
-                  className={`w-full py-3 rounded-xl font-medium text-sm transition-all flex items-center justify-center gap-2 ${
-                    isRunning ? 'bg-white/5 text-white/40 cursor-not-allowed' : 'bg-orange-500 text-white hover:bg-orange-600'
-                  }`}>
-                  {isRunning ? <><Loader2 className="w-4 h-4 animate-spin" /> Running...</> : <><Flame className="w-4 h-4" /> Inject Failure</>}
-                </button>
+                <motion.button
+                  onClick={injectFailure}
+                  disabled={isAnalyzing}
+                  aria-label={isAnalyzing ? 'Simulation running' : 'Inject failure into selected service'}
+                  className="w-full px-5 py-3.5 rounded-xl text-sm font-semibold disabled:opacity-50 transition-all text-white"
+                  style={{ background: 'linear-gradient(180deg, #6366F1 0%, #4F46E5 100%)', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.2), 0 4px 14px rgba(99,102,241,0.2)' }}
+                  whileHover={{ filter: 'brightness(1.1)' }}
+                  whileTap={{ scale: 0.98 }}
+                >
+                  {isAnalyzing ? 'Running Simulation...' : 'Inject Failure'}
+                </motion.button>
               </div>
 
-              {/* Results */}
-              <div className="lg:col-span-3 p-6 flex flex-col gap-4">
-                {/* Event stream */}
-                <div className="rounded-xl border border-white/[0.06] bg-black/30 p-4 flex-1 min-h-[180px]">
-                  <div className="flex items-center gap-2 mb-3">
-                    <Activity className="w-3.5 h-3.5 text-orange-400" />
-                    <span className="text-[12px] font-medium text-white/60">Live telemetry</span>
-                  </div>
-                  <div className="space-y-1.5 font-mono text-[12px]">
-                    {events.length === 0 && <div className="text-white/20 py-8 text-center italic">Awaiting injection...</div>}
-                    <AnimatePresence>
-                      {events.map((e, i) => (
-                        <motion.div key={i} initial={{ opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }} className="flex items-start gap-2.5">
-                          <span className="text-white/25 w-10 shrink-0">{e.time}</span>
-                          <span className={`w-1.5 h-1.5 rounded-full mt-1.5 shrink-0 ${
-                            e.type === 'inject' ? 'bg-orange-400' : e.type === 'signal' ? 'bg-cyan-400' : e.type === 'ai' ? 'bg-purple-400' : 'bg-emerald-400'
-                          }`} />
-                          <span className={e.type === 'done' ? 'text-emerald-300' : 'text-white/60'}>{e.text}</span>
+              {/* Telemetry + Results */}
+              <div className="w-full lg:w-3/5 p-5 sm:p-6 space-y-6">
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-500 mb-3 uppercase tracking-wider">Live Telemetry</label>
+                  <div
+                    className="h-56 rounded-xl p-5 text-sm overflow-y-auto space-y-2 shadow-[inset_0_2px_10px_rgba(0,0,0,0.5)] font-mono"
+                    style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.05)' }}
+                  >
+                    {telemetryEvents.length === 0 ? (
+                      <div className="text-zinc-600 flex items-center h-full justify-center opacity-50">Waiting for failure injection...</div>
+                    ) : (
+                      telemetryEvents.map((event, i) => (
+                        <motion.div key={i} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} className="text-indigo-300 leading-relaxed text-xs">
+                          {event}
                         </motion.div>
-                      ))}
-                    </AnimatePresence>
+                      ))
+                    )}
                   </div>
                 </div>
 
-                {/* Verdict card */}
-                <AnimatePresence mode="wait">
-                  {phase === 'done' ? (
-                    <motion.div key="verdict" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-                      className="rounded-xl border border-orange-500/20 bg-gradient-to-br from-orange-500/[0.04] to-transparent p-5">
-                      <div className="flex items-start justify-between gap-4 mb-3">
-                        <div className="flex items-center gap-2.5">
-                          <div className="w-8 h-8 rounded-lg bg-orange-500/20 flex items-center justify-center">
-                            <Brain className="w-4 h-4 text-orange-400" />
-                          </div>
-                          <div>
-                            <div className="text-sm font-semibold text-white">Root Cause Verdict</div>
-                            <div className="text-[11px] text-white/35 font-mono">multi-model ensemble</div>
-                          </div>
-                        </div>
-                        <div className="text-right">
-                          <div className="text-2xl font-bold text-orange-400">{result.confidence}%</div>
-                          <div className="text-[10px] text-white/35 uppercase">confidence</div>
-                        </div>
+                <AnimatePresence>
+                  {!isAnalyzing && telemetryEvents.length > 0 && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 16 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0 }}
+                      className="rounded-xl p-6 relative overflow-hidden backdrop-blur-md"
+                      style={{
+                        background: 'linear-gradient(180deg, rgba(99,102,241,0.08) 0%, rgba(0,0,0,0.4) 100%)',
+                        border: '1px solid rgba(99,102,241,0.3)',
+                        boxShadow: '0 10px 40px -10px rgba(99,102,241,0.15)',
+                      }}
+                    >
+                      <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-indigo-500 to-indigo-400" />
+                      <div className="flex items-start justify-between mb-4">
+                        <span className="text-sm font-bold text-indigo-400 uppercase tracking-wide">Root Cause Verdict</span>
+                        <span className="text-2xl font-bold text-white tracking-tight">94%</span>
                       </div>
-                      <p className="text-sm text-white/70 leading-relaxed mb-4">{result.cause}</p>
-                      <div className="grid grid-cols-3 gap-2 mb-3">
-                        <div className="rounded-lg bg-white/[0.03] border border-white/[0.06] px-2.5 py-2">
-                          <div className="text-[10px] text-white/35 uppercase">Impact</div>
-                          <div className="text-xs font-semibold text-red-400 mt-0.5">{result.impact}</div>
-                        </div>
-                        <div className="rounded-lg bg-white/[0.03] border border-white/[0.06] px-2.5 py-2">
-                          <div className="text-[10px] text-white/35 uppercase">Blast</div>
-                          <div className="text-xs font-semibold text-orange-400 mt-0.5">{result.blast}</div>
-                        </div>
-                        <div className="rounded-lg bg-white/[0.03] border border-white/[0.06] px-2.5 py-2">
-                          <div className="text-[10px] text-white/35 uppercase">Signals</div>
-                          <div className="text-xs font-semibold text-cyan-400 mt-0.5">{result.signals.length} correlated</div>
-                        </div>
-                      </div>
-                      <div className="flex flex-wrap gap-1.5">
-                        {result.signals.map((s: string, i: number) => (
-                          <span key={i} className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-white/[0.04] text-white/50 border border-white/[0.06]">{s}</span>
+                      <p className="text-sm text-zinc-300 mb-6 leading-relaxed">
+                        High memory usage on <code className="text-indigo-300 bg-indigo-500/10 px-1.5 py-0.5 rounded">{selectedService}</code> triggered by {selectedFailure}. Hybrid analysis pipeline correlated anomaly scores, matched 2 rules, and confirmed via RAG similarity with past incidents.
+                      </p>
+                      <div className="grid grid-cols-3 gap-4 border-t border-white/5 pt-4">
+                        {[['Impact', 'Critical'], ['Services', '3 affected'], ['Confidence', '94%']].map(([k, v]) => (
+                          <div key={k}>
+                            <div className="text-xs font-medium text-zinc-500 mb-1 uppercase tracking-wider">{k}</div>
+                            <div className="text-white font-semibold text-sm">{v}</div>
+                          </div>
                         ))}
                       </div>
-                    </motion.div>
-                  ) : (
-                    <motion.div key="empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                      className="rounded-xl border border-white/[0.06] bg-white/[0.01] p-5 flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-lg bg-white/[0.03] flex items-center justify-center">
-                        <Brain className="w-4 h-4 text-white/30" />
-                      </div>
-                      <div>
-                        <div className="text-sm text-white/60">AI Verdict</div>
-                        <div className="text-[12px] text-white/30">Appears after simulation completes</div>
-                      </div>
-                      {isRunning && <Loader2 className="w-4 h-4 text-white/30 animate-spin ml-auto" />}
                     </motion.div>
                   )}
                 </AnimatePresence>
               </div>
             </div>
+          </motion.div>
+        </div>
+      </section>
+
+      {/* ── SETUP ── */}
+      <section className="relative py-28 px-8 border-t border-white/5">
+        <div className="max-w-3xl mx-auto">
+          <motion.div className="mb-16 text-center" initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }}>
+            <h2 className="text-4xl sm:text-5xl tracking-tight leading-tight mb-4 font-semibold text-white">
+              Up and running in <span className="text-indigo-400">minutes</span>.
+            </h2>
+            <p className="text-lg text-zinc-400">Three steps to AI-powered incident response</p>
+          </motion.div>
+
+          <div className="space-y-6">
+            {[
+              { num: 1, title: 'Register and get your webhook token', code: 'POST /api/v1/auth/register → returns JWT + webhook_token', icon: Lock },
+              { num: 2, title: 'Configure Prometheus Alertmanager', code: 'webhook_configs:\n  - url: https://your-backend.onrender.com/api/v1/telemetry/prometheus/<your-token>', icon: Activity },
+              { num: 3, title: 'Alerts flow in, AI analyzes automatically', code: '✓ Incidents created, grouped, and analyzed with root cause verdicts', icon: Brain },
+            ].map((step, i) => (
+              <motion.div
+                key={i}
+                className="flex flex-col sm:flex-row gap-4 sm:gap-6 group"
+                initial={{ opacity: 0, x: -24 }}
+                whileInView={{ opacity: 1, x: 0 }}
+                viewport={{ once: true }}
+                transition={{ duration: 0.5, delay: i * 0.12 }}
+              >
+                <div className="w-10 h-10 rounded-full border border-zinc-800 bg-[#18181b] flex items-center justify-center flex-shrink-0 group-hover:border-indigo-500/40 group-hover:bg-indigo-500/10 transition-all shadow-sm">
+                  <span className="text-sm font-bold text-zinc-500 group-hover:text-indigo-400 transition-colors">{step.num}</span>
+                </div>
+                <div className="flex-1">
+                  <div className="flex items-center gap-2.5 mb-3">
+                    <step.icon className="w-4 h-4 text-zinc-500 group-hover:text-zinc-300 transition-colors" />
+                    <h4 className="text-base font-semibold text-zinc-200">{step.title}</h4>
+                  </div>
+                  <div
+                    className="rounded-xl p-4 text-sm relative group/code shadow-inner transition-colors overflow-hidden font-mono"
+                    style={{
+                      background: 'linear-gradient(160deg, rgba(255,255,255,0.03) 0%, rgba(17,17,19,0.8) 100%)',
+                      border: '1px solid rgba(255,255,255,0.08)',
+                    }}
+                  >
+                    <code className="text-indigo-300 break-all text-xs whitespace-pre-wrap">{step.code}</code>
+                  </div>
+                </div>
+              </motion.div>
+            ))}
           </div>
-        </FadeIn>
-      </div>
-    </section>
-  )
-}
+        </div>
+      </section>
 
-/* =========================================================
-   CTA — Final conversion section
-   ========================================================= */
-
-function CTA() {
-  return (
-    <section className="relative py-32">
-      <div className="max-w-4xl mx-auto px-4">
-        <FadeIn>
-          <div className="relative rounded-3xl border border-white/[0.06] bg-gradient-to-br from-orange-500/[0.04] via-transparent to-cyan-500/[0.02] p-12 sm:p-16 text-center overflow-hidden">
-            {/* Glow */}
-            <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[400px] h-[200px] bg-orange-500/10 blur-[100px] rounded-full" />
-
-            <div className="relative">
-              <h2 className="text-3xl sm:text-5xl font-semibold tracking-tight text-white">
-                Ready to ship
-                <br />
-                <span className="text-white/60">resilient systems?</span>
-              </h2>
-              <p className="mt-4 text-white/45 text-lg max-w-lg mx-auto">
-                Deploy in minutes. Watch incidents resolve themselves.
-              </p>
-              <div className="mt-8 flex flex-wrap items-center justify-center gap-4">
-                <a href="/register" className="group inline-flex items-center gap-2 px-7 py-3.5 rounded-full bg-white text-black text-sm font-semibold hover:shadow-[0_0_40px_rgba(255,255,255,0.15)] transition-all hover:-translate-y-0.5">
-                  Get Started Free
-                  <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-0.5" />
-                </a>
-                <a href="https://github.com/sujalmeena7/sentinel-sre" target="_blank" rel="noopener noreferrer"
-                  className="inline-flex items-center gap-2 px-6 py-3.5 rounded-full border border-white/[0.1] text-white/70 text-sm font-medium hover:bg-white/[0.04] transition-all">
-                  <Github className="w-4 h-4" />
-                  Star on GitHub
-                </a>
+      {/* ── FOOTER ── */}
+      <footer className="relative border-t py-12 px-6 sm:px-8 bg-[#09090b]" style={{ borderColor: 'rgba(255,255,255,0.05)' }}>
+        <div className="max-w-6xl mx-auto">
+          <div className="flex flex-col gap-8 sm:gap-6">
+            {/* Top row */}
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-6">
+              <div className="flex items-center gap-3">
+                <Shield className="w-5 h-5 text-indigo-500" />
+                <span className="text-sm font-bold text-white tracking-wide">Sentinel-SRE</span>
               </div>
-              <p className="mt-6 text-[13px] text-white/30">Open source · Self-hostable · No limits</p>
+              <div className="flex flex-wrap items-center justify-center gap-6 sm:gap-8 font-medium">
+                <a href="https://github.com/sujalmeena7/sentinel-sre" target="_blank" rel="noopener noreferrer" className="text-sm text-zinc-500 hover:text-white transition-colors">GitHub</a>
+                <a href="#features" className="text-sm text-zinc-500 hover:text-white transition-colors">Features</a>
+                <a href="/privacy" className="text-sm text-zinc-500 hover:text-white transition-colors">Privacy</a>
+                <a href="/terms" className="text-sm text-zinc-500 hover:text-white transition-colors">Terms</a>
+              </div>
+            </div>
+
+            {/* Divider */}
+            <div className="border-t" style={{ borderColor: 'rgba(255,255,255,0.05)' }} />
+
+            {/* Bottom row */}
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-zinc-600">
+              <p>© 2026 Sentinel-SRE. Open-source project by Sujal Meena.</p>
+              <p>Built with Next.js, FastAPI, Groq & ChromaDB.</p>
             </div>
           </div>
-        </FadeIn>
-      </div>
-    </section>
-  )
-}
-
-/* =========================================================
-   FOOTER — Minimal
-   ========================================================= */
-
-function Footer() {
-  return (
-    <footer className="border-t border-white/[0.05] py-10">
-      <div className="max-w-6xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-4">
-        <div className="flex items-center gap-2">
-          <div className="w-6 h-6 rounded-md bg-orange-500 flex items-center justify-center">
-            <Shield className="w-3 h-3 text-white" />
-          </div>
-          <span className="text-sm text-white/50">Sentinel-SRE</span>
         </div>
-        <div className="flex items-center gap-6 text-[13px] text-white/30">
-          <a href="https://github.com/sujalmeena7/sentinel-sre" target="_blank" rel="noopener noreferrer" className="hover:text-white/60 transition-colors">GitHub</a>
-          <a href="/login" className="hover:text-white/60 transition-colors">Sign in</a>
-          <a href="/register" className="hover:text-white/60 transition-colors">Get Started</a>
-        </div>
-        <p className="text-[12px] text-white/20">© 2026 Sentinel-SRE</p>
-      </div>
-    </footer>
-  )
-}
-
-/* =========================================================
-   PAGE
-   ========================================================= */
-
-export default function Page() {
-  return (
-    <MotionWrap>
-      <main className="relative min-h-screen bg-black text-white selection:bg-orange-500/30 overflow-x-hidden">
-        {/* Fixed background layers */}
-        <div className="fixed inset-0 pointer-events-none z-0">
-          <div className="absolute inset-0 bg-dot-grid opacity-30" />
-          <div className="absolute inset-0 bg-cinematic-noise opacity-[0.04]" />
-        </div>
-
-        <div className="relative z-10">
-          <Navbar />
-          <Hero />
-          <Features />
-          <ChaosDemo />
-          <HowItWorks />
-          <CTA />
-          <Footer />
-        </div>
-      </main>
-    </MotionWrap>
+      </footer>
+    </div>
+    </LazyMotion>
   )
 }

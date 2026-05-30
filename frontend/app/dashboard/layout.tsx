@@ -1,4 +1,5 @@
 import ProtectedRoute from '@/components/ProtectedRoute'
+import { ErrorBoundary } from '@/components/ErrorBoundary'
 import UserMenu from '@/components/UserMenu'
 import Link from 'next/link'
 import { Shield } from 'lucide-react'
@@ -6,6 +7,7 @@ import { Shield } from 'lucide-react'
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   return (
     <ProtectedRoute>
+      <ErrorBoundary>
       <div className="min-h-screen bg-surface bg-grid">
         {/* Ambient background gradient orbs */}
         <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden">
@@ -32,6 +34,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           {children}
         </div>
       </div>
+      </ErrorBoundary>
     </ProtectedRoute>
   )
 }
