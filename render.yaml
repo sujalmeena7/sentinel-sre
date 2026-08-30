@@ -28,7 +28,9 @@ services:
     # Single worker is required, not a cost saving: background analysis uses an
     # in-process thread pool and an in-memory task registry, so a second worker
     # would not see tasks started by the first. --timeout 180 covers synchronous
-    # LLM calls (postmortem generation).
+    # LLM calls (postmortem generation). These are repeated here for visibility,
+    # but backend/gunicorn.conf.py is auto-loaded and sets the same values, so a
+    # start command that omits them still gets them.
     startCommand: gunicorn -w 1 -k uvicorn.workers.UvicornWorker main:app --bind 0.0.0.0:$PORT --timeout 180 --graceful-timeout 30 --keep-alive 75
     healthCheckPath: /health
     autoDeploy: true

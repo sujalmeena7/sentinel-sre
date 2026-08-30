@@ -210,15 +210,15 @@ If you'd rather configure it manually:
 
 1. **Root Directory**: `backend`.
 2. **Build Command**: `pip install --no-cache-dir -r requirements.txt`.
-3. **Start Command**: `gunicorn -w 1 -k uvicorn.workers.UvicornWorker main:app --bind 0.0.0.0:$PORT --timeout 180 --graceful-timeout 30 --keep-alive 75`.
+3. **Start Command**: `gunicorn -w 1 -k uvicorn.workers.UvicornWorker main:app --bind 0.0.0.0:$PORT --timeout 180 --graceful-timeout 30 --keep-alive 75`. The flags are also set in [backend/gunicorn.conf.py](backend/gunicorn.conf.py), which gunicorn auto-loads from the working directory, so a shorter start command still gets them.
 4. **Health Check Path**: `/health`.
 5. Required env: `JWT_SECRET`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `DATABASE_URL`, `APP_ENV=production`, `PYTHON_VERSION=3.12.7`.
 6. Recommended env: `GROQ_API_KEY`, `ALLOWED_ORIGINS`, `FRONTEND_URL`, `CHROMA_PATH`, `DIAGNOSTICS_TOKEN`.
 
 Constraints that are load-bearing, not preferences:
 
-*   **One worker.** Background analysis uses an in-process thread pool and an in-memory task registry, so a second worker cannot see tasks the first one started.
-*   **`--timeout 180`.** Postmortem generation is a synchronous LLM call; the default 30s kills it mid-flight.
+*   **One worker.** Background analysis uses an in-process thread pool and an in-memory task registry, so a second worker cannot see tasks the first one started. Render derives `WEB_CONCURRENCY` from the CPU count, so this is pinned in [gunicorn.conf.py](backend/gunicorn.conf.py) rather than left to the environment.
+*   **`--timeout 180`.** Postmortem generation is a synchronous LLM call; the default 30s kills it mid-flight and returns a `WORKER TIMEOUT` with no application error to explain it.
 *   **512 MB is enough, but only just.** Importing the app costs ~130 MB and a serving process settles around 210 MB. Do not add `llama-index-llms-*` back to [requirements.txt](backend/requirements.txt) — it pulls torch and transformers, which pushed the import alone to ~400 MB and got the worker OOM-killed on boot.
 *   **`DATABASE_URL` must be Postgres in production.** SQLite lives on an ephemeral container filesystem and is wiped on every redeploy; the app logs an error at boot if you do this. Note that Render's *free* Postgres is deleted automatically after its trial window — when the database vanishes, the app boots degraded and `/api/v1/diagnostics` says so.
 *   **Free instances have no persistent disk**, so `CHROMA_PATH` should point at `/tmp` and the vector index is rebuilt from Postgres on each boot by the deferred backfill. On a paid plan, mount a disk and point `CHROMA_PATH` at it.

@@ -7,6 +7,7 @@ outage with no way to diagnose it from outside the host.
 """
 
 import sys
+from pathlib import Path
 
 import httpx
 import pytest
@@ -231,6 +232,57 @@ def test_a_duplicate_groq_model_override_is_not_tried_twice(monkeypatch):
 
     models = [c.model for c in rag_engine.candidate_llms()]
     assert len(models) == len(set(models))
+
+
+# ─── Gunicorn settings that are correctness, not tuning ─────────────
+
+def _gunicorn_config() -> dict:
+    """Evaluate gunicorn.conf.py without importing gunicorn.
+
+    gunicorn itself is POSIX-only (`import fcntl`), so it cannot be imported on
+    a Windows dev box. The config file only needs `os`, so exec'ing it directly
+    keeps this test runnable everywhere the rest of the suite is.
+    """
+    path = Path(__file__).resolve().parent.parent / "gunicorn.conf.py"
+    assert path.exists(), (
+        "backend/gunicorn.conf.py is missing. Gunicorn auto-loads it from the "
+        "working directory, which is how the timeout below survives a hand-typed "
+        "start command that omits --timeout."
+    )
+    namespace: dict = {}
+    exec(compile(path.read_text(encoding="utf-8"), str(path), "exec"), namespace)
+    return namespace
+
+
+def test_worker_count_is_pinned_to_one():
+    """Background analysis keeps its task registry in process memory.
+
+    A second worker accepts the status poll for a task it never started and
+    reports it missing, so the UI polls forever. Render also derives
+    WEB_CONCURRENCY from the CPU count, which would scale this up silently —
+    hence pinning it in the config rather than trusting the start command.
+    """
+    assert _gunicorn_config()["workers"] == 1
+
+
+def test_the_request_timeout_outlives_a_postmortem_llm_call():
+    """Postmortem generation is a synchronous LLM call that runs past a minute.
+
+    Gunicorn's default 30s kills the worker mid-request and returns a WORKER
+    TIMEOUT with no application error explaining it.
+    """
+    config = _gunicorn_config()
+    assert config["timeout"] >= 120, "must exceed a slow postmortem generation"
+    assert config["timeout"] > rag_engine.LLM_TIMEOUT_SECONDS, (
+        "the worker must not be killed before the LLM call it is waiting on "
+        "has had a chance to time out and be handled"
+    )
+
+
+def test_keepalive_exceeds_the_upstream_proxy_idle_timeout():
+    """Below the proxy's idle timeout, the proxy reuses a socket gunicorn has
+    already closed and the client sees an intermittent 502."""
+    assert _gunicorn_config()["keepalive"] >= 60
 
 
 # ─── Health & diagnostics ───────────────────────────────────────────
