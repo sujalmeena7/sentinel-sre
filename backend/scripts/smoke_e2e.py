@@ -1,7 +1,14 @@
-"""One-shot end-to-end probe against a locally running backend.
+"""One-shot end-to-end probe against a running backend.
 
 Reads credentials from backend/.env and prints outcomes only — never secrets.
 Not part of the pytest suite (this one deliberately hits the real LLM).
+
+Targets localhost by default. Pass a base origin to probe a deployed instance:
+
+    python scripts/smoke_e2e.py https://sentinel-backend-box9.onrender.com
+
+The deployed admin password is whatever ADMIN_PASSWORD is set to on the host,
+which may differ from the local .env — override with SMOKE_PASSWORD if so.
 """
 import json
 import os
@@ -11,7 +18,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-BASE = "http://127.0.0.1:8000/api/v1"
+ORIGIN = (sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8000").rstrip("/")
+BASE = f"{ORIGIN}/api/v1"
 ENV = Path(__file__).resolve().parent.parent / ".env"
 
 
@@ -42,9 +50,12 @@ def call(method, path, payload=None, token=None):
 
 def main():
     env = load_env()
-    email, password = env.get("ADMIN_EMAIL"), env.get("ADMIN_PASSWORD")
+    email = os.getenv("SMOKE_EMAIL") or env.get("ADMIN_EMAIL")
+    password = os.getenv("SMOKE_PASSWORD") or env.get("ADMIN_PASSWORD")
     if not email or not password:
         sys.exit("ADMIN_EMAIL / ADMIN_PASSWORD missing from .env")
+
+    print(f"    target                 : {ORIGIN}")
 
     status, body = call("POST", "/auth/login", {"email": email, "password": password})
     print(f"[1] admin login            -> {status} verified={body['user']['email_verified'] if status == 200 else body}")
