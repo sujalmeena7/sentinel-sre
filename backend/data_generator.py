@@ -50,7 +50,8 @@ def generate_deterministic_incident(service: str, failure_type: str, severity: s
         incident["symptoms"] = ["DB Connection Wait Error", "Slow Queries", "5xx Error Spikes"]
         incident["signals"] = [
             {"log": "Exception: Connection Refused"},
-            {"metric": "active_db_connections", "value": f"{500 * severity_scaler}"},
+            {"metric": "active_db_connections", "value": f"{150 + (70 * severity_scaler)}"},
+            {"metric": "connection_pool_usage", "value": f"{85 + (severity_scaler * 4)}%"},
             {"log": "Timeout waiting for connection from pool"}
         ]
         incident["changes"] = [{"event": "config_change", "key": "DB_IDLE_TIMEOUT", "old": "300s", "new": "10s"}]
@@ -59,7 +60,9 @@ def generate_deterministic_incident(service: str, failure_type: str, severity: s
     elif failure_type == "Latency spike":
         incident["symptoms"] = ["Network Timeout", "High Latency", "Upstream Unavailable Response"]
         incident["signals"] = [
-            {"metric": "network_latency_ms", "value": f"{200 * severity_scaler}ms"},
+            # Named to match a known baseline in anomaly_scorer.METRIC_BASELINES
+            # so the statistical layer actually scores this incident.
+            {"metric": "latency_p99", "value": f"{250 * severity_scaler}ms"},
             {"log": "P99 latency exceeded 2000ms limits"}
         ]
         incident["root_cause"] = f"Downstream dependency overloaded causing cascading latency spikes at {service}."

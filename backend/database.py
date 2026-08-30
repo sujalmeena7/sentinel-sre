@@ -6,13 +6,55 @@ from sqlalchemy.pool import QueuePool
 
 logger = logging.getLogger(__name__)
 
+
+def _is_production() -> bool:
+    """True on a hosted deploy. Render/Vercel set their own marker vars."""
+    env = (os.getenv("APP_ENV") or os.getenv("ENV") or "").lower()
+    return env in {"production", "prod"} or bool(os.getenv("RENDER") or os.getenv("VERCEL"))
+
+
+def _normalise_database_url(raw: str) -> str:
+    """Coerce a provider-supplied URL into one SQLAlchemy 2.x actually accepts.
+
+    Render (and Heroku) hand out `postgres://...`, a scheme SQLAlchemy 2.x
+    dropped: `create_engine` fails at import time with
+    "Can't load plugin: sqlalchemy.dialects:postgres", the worker dies, and the
+    platform reports an opaque 502 with no application log to explain it.
+    Rewriting the scheme here is the difference between a working deploy and an
+    unbootable one.
+    """
+    url = (raw or "").strip()
+    if url.startswith("postgres://"):
+        url = "postgresql+psycopg2://" + url[len("postgres://"):]
+    elif url.startswith("postgresql://"):
+        url = "postgresql+psycopg2://" + url[len("postgresql://"):]
+    return url
+
+
 # Use DATABASE_URL from environment with SQLite as fallback
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./incidents.db")
+DATABASE_URL = _normalise_database_url(os.getenv("DATABASE_URL", "")) or "sqlite:///./incidents.db"
 
 # SQLite requires check_same_thread=False for FastAPI concurrency.
 # Other DBs (Postgres, MySQL) should not use this argument.
 is_sqlite = DATABASE_URL.startswith("sqlite")
 connect_args = {"check_same_thread": False} if is_sqlite else {}
+
+if is_sqlite and _is_production():
+    # A container filesystem is ephemeral: every redeploy silently resets the
+    # database. Loud at boot beats "why did my users disappear?" later.
+    logger.error(
+        "DATABASE_URL is unset or SQLite while APP_ENV=production. Data will be "
+        "LOST on every redeploy — provision a managed Postgres and set DATABASE_URL."
+    )
+
+# Postgres needs a statement timeout so one pathological query cannot pin a
+# connection forever on a single-worker deploy.
+if not is_sqlite:
+    connect_args = {
+        "connect_timeout": 10,
+        "options": "-c statement_timeout=30000",
+        "application_name": "sentinel-sre",
+    }
 
 # Production Postgres connection pooling settings
 pool_kwargs = {}
@@ -80,6 +122,21 @@ def init_db():
             ))
     except Exception as exc:
         logger.debug(f"email_verified backfill skipped: {exc}")
+
+
+def db_healthy() -> tuple[bool, str]:
+    """Cheap liveness probe for /health. Returns (ok, detail).
+
+    Exists so a broken database surfaces as a readable JSON payload instead of
+    an opaque platform 502 — the failure mode that made the last outage
+    undiagnosable from outside the host.
+    """
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        return True, "sqlite" if is_sqlite else "postgres"
+    except Exception as exc:
+        return False, f"{type(exc).__name__}: {str(exc)[:200]}"
 
 
 def get_session():

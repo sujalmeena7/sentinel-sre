@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import {   m as motion   } from 'framer-motion';
-import { Zap, Play, Activity, Database, Server } from 'lucide-react';
+import { Zap, Play, Activity, AlertTriangle } from 'lucide-react';
 import { triggerSimulation } from '@/lib/api';
 
 interface ChaosPanelProps {
@@ -29,9 +29,11 @@ export default function ChaosPanel({ onSimulationTriggered }: ChaosPanelProps) {
   const [failureType, setFailureType] = useState(FAILURE_TYPES[0]);
   const [severity, setSeverity] = useState('moderate');
   const [isInjecting, setIsInjecting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const handleTrigger = async (preset?: { service: string; failure: string; severity: string }) => {
     setIsInjecting(true);
+    setError(null);
     try {
       const payload = preset || { service, failure: failureType, severity };
       await triggerSimulation(payload.service, payload.failure, payload.severity);
@@ -42,6 +44,9 @@ export default function ChaosPanel({ onSimulationTriggered }: ChaosPanelProps) {
       }, 500);
     } catch (e) {
       console.error(e);
+      // A silent failure here looks identical to "nothing happened", which is
+      // the worst outcome during a demo — always say what went wrong.
+      setError(e instanceof Error ? e.message : 'Failed to inject chaos. Is the backend running?');
       setIsInjecting(false);
     }
   };
@@ -106,6 +111,16 @@ export default function ChaosPanel({ onSimulationTriggered }: ChaosPanelProps) {
           {isInjecting ? <Activity size={16} className="animate-spin" /> : <Play size={16} />}
           Inject Custom Chaos
         </button>
+
+        {error && (
+          <div
+            role="alert"
+            className="flex items-start gap-2 rounded-lg border border-accent-rose/20 bg-accent-rose/10 px-3 py-2 text-xs text-accent-rose"
+          >
+            <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+            <span>{error}</span>
+          </div>
+        )}
 
         {/* Presets */}
         <div className="pt-4 border-t border-white/5">

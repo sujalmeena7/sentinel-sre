@@ -1,21 +1,45 @@
-fastapi>=0.115.0
-uvicorn>=0.30.0
-sqlmodel>=0.0.16
-pydantic-settings>=2.2.0
-llama-index-core>=0.10.0
-llama-index-llms-groq>=0.1.0
-llama-index-llms-openai>=0.1.0
-llama-index-vector-stores-chroma>=0.1.0
-chromadb>=0.4.24
-python-dotenv>=1.0.1
-sqlalchemy>=2.0.40
-alembic>=1.13.0
-llama-index-embeddings-openai>=0.1.0
-httpx>=0.27.0
-psycopg2-binary>=2.9.9
-gunicorn>=22.0.0
-bcrypt>=4.0,<4.2
-PyJWT>=2.8.0
-slowapi>=0.1.9
-email-validator>=2.0.0
-boto3>=1.34.0
+# Backend runtime dependencies.
+#
+# Upper bounds are deliberate. Every constraint here used to be an open `>=`,
+# which means a redeploy months later resolves to whatever is newest — and that
+# is exactly how a deploy that worked in April breaks in August without a single
+# line of code changing. chromadb went 0.4 -> 1.5 and starlette 1.0 -> 1.6 in
+# that window. Bounds are set to "known-good, allow patches and minors within
+# the tested major".
+
+fastapi>=0.115,<0.142
+uvicorn>=0.30,<1.0
+starlette>=1.0,<2.0
+sqlmodel>=0.0.38,<0.1
+sqlalchemy>=2.0.40,<2.1
+alembic>=1.13,<2.0
+pydantic>=2.9,<3.0
+pydantic-settings>=2.2,<3.0
+
+# ── Vector store / retrieval ────────────────────────────────────────
+# llama-index-llms-groq / llama-index-llms-openai are intentionally absent.
+# They pull llama-index-llms-openai-like -> transformers -> torch: gigabytes of
+# wheels at build time and 282 MB of RSS at runtime (measured) purely to POST to
+# an HTTPS endpoint, which OOM-killed the 512 MB deploy. Groq and OpenAI both
+# speak the OpenAI chat-completions protocol, so rag_engine.ChatCompletionLLM
+# calls them over httpx instead. The embeddings integration stays because it is
+# light (11 MB) and plugs directly into the vector store.
+llama-index-core>=0.14,<0.15
+llama-index-embeddings-openai>=0.6,<0.7
+llama-index-vector-stores-chroma>=0.5,<0.6
+chromadb>=1.5,<2.0
+
+# ── Auth ────────────────────────────────────────────────────────────
+# bcrypt 5.x is what is actually tested; the old `<4.2` bound meant the deploy
+# installed a different major version than local development ever ran.
+bcrypt>=4.1,<6.0
+PyJWT>=2.8,<3.0
+email-validator>=2.0,<3.0
+slowapi>=0.1.9,<0.2
+
+# ── Infrastructure ──────────────────────────────────────────────────
+httpx>=0.27,<1.0
+python-dotenv>=1.0.1,<2.0
+psycopg2-binary>=2.9.9,<3.0
+gunicorn>=22.0,<27.0
+boto3>=1.34,<2.0

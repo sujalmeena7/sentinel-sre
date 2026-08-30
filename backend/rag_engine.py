@@ -16,19 +16,26 @@ Hardening features:
 
 import os
 import math
+import hashlib
 import logging
+import re
 import threading
-from typing import Optional
+from typing import List, Optional
 import chromadb
+import httpx
 from dotenv import load_dotenv
 
 # Provide a global lock for ChromaDB to prevent SQLite SIGABRT crashes under concurrency
 chroma_lock = threading.Lock()
 from llama_index.core import VectorStoreIndex, Document, StorageContext, Settings
+from llama_index.core.embeddings import BaseEmbedding
 from llama_index.core.vector_stores.types import MetadataFilters, ExactMatchFilter
 from llama_index.vector_stores.chroma import ChromaVectorStore
-from llama_index.llms.groq import Groq
-from llama_index.llms.openai import OpenAI
+
+# NOTE: `llama_index.llms.groq` / `llama_index.llms.openai` are deliberately NOT
+# imported — they drag in torch + transformers (282 MB RSS, measured) to make an
+# HTTP call. Completion goes through ChatCompletionLLM below instead. Retrieval
+# here is embedding-only and never needs a llama-index LLM object.
 from llama_index.embeddings.openai import OpenAIEmbedding
 
 load_dotenv()
@@ -49,38 +56,235 @@ _chroma_collection = None
 _vector_store = None
 _storage_context = None
 
+# Overridable so a deployment can point the vector store at a mounted disk and
+# the test suite can use a throwaway directory.
+CHROMA_PATH = os.getenv("CHROMA_PATH", "./chroma_db")
+
 def get_chroma_components():
     global _chroma_client, _chroma_collection, _vector_store, _storage_context
     if _chroma_client is None:
-        _chroma_client = chromadb.PersistentClient(path="./chroma_db")
-        _chroma_collection = _chroma_client.get_or_create_collection("incidents")
+        _chroma_client = chromadb.PersistentClient(path=CHROMA_PATH)
+        _chroma_collection = _chroma_client.get_or_create_collection(_collection_name())
         _vector_store = ChromaVectorStore(chroma_collection=_chroma_collection)
         _storage_context = StorageContext.from_defaults(vector_store=_vector_store)
     return _chroma_client, _chroma_collection, _vector_store, _storage_context
 
-# ─── LLM Setup (manual fallback: Groq first, then OpenAI) ────────────
+
+def vector_count() -> int:
+    """Number of vectors in the active collection."""
+    _, chroma_collection, _, _ = get_chroma_components()
+    with chroma_lock:
+        return chroma_collection.count()
+
+# ─── LLM Setup (ordered fallback chain: Groq models, then OpenAI) ─────
 groq_api_key = os.getenv("GROQ_API_KEY", "")
 openai_api_key = os.getenv("OPENAI_API_KEY", "")
 
+# Groq retires models regularly — a hardcoded id eventually starts returning
+# 404 model_not_found and silently kills every narrative. The id is therefore
+# configurable, and unreachable models are skipped at call time.
+GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+GROQ_FALLBACK_MODELS = ("openai/gpt-oss-20b", "groq/compound-mini")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+GROQ_BASE_URL = os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+LLM_TIMEOUT_SECONDS = 20.0
+
+
+class LLMUnavailableError(RuntimeError):
+    """Raised when every configured model failed or none is configured."""
+
+
+class ChatCompletionLLM:
+    """Minimal OpenAI-protocol chat client over httpx.
+
+    This replaces `llama_index.llms.groq.Groq` / `llama_index.llms.openai.OpenAI`
+    for text completion, and the reason is memory, not style: importing
+    `llama_index.llms.groq` transitively pulls torch, transformers, sklearn and
+    scipy, which costs **282 MB of RSS** — measured — purely to make an HTTPS
+    request. On a 512 MB host that is the difference between booting and being
+    OOM-killed, which is what took the last deploy down. Importing `main` drops
+    from 397 MB to 128 MB with this class in place.
+
+    Groq and OpenAI both speak `/chat/completions`, so one client covers both.
+    The `.model` attribute and `.complete(prompt).text` shape are kept so
+    `complete_with_fallback` and its tests are unaffected.
+    """
+
+    class _Response:
+        __slots__ = ("text",)
+
+        def __init__(self, text: str):
+            self.text = text
+
+    def __init__(self, model: str, api_key: str, base_url: str, timeout: float = LLM_TIMEOUT_SECONDS):
+        self.model = model
+        self._api_key = api_key
+        self._base_url = base_url.rstrip("/")
+        self._timeout = timeout
+
+    def complete(self, prompt: str) -> "ChatCompletionLLM._Response":
+        response = httpx.post(
+            f"{self._base_url}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {self._api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": self.model,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.2,
+            },
+            timeout=self._timeout,
+        )
+        if response.status_code != 200:
+            # Surface the provider's own message: "model_not_found" and
+            # "insufficient_quota" are exactly what the fallback chain logs and
+            # what makes an outage diagnosable.
+            raise RuntimeError(f"HTTP {response.status_code}: {response.text[:300]}")
+        payload = response.json()
+        try:
+            return self._Response(payload["choices"][0]["message"]["content"] or "")
+        except (KeyError, IndexError, TypeError) as exc:
+            raise RuntimeError(f"Malformed completion response: {str(payload)[:200]}") from exc
+
+
+def _has(key: str) -> bool:
+    return bool(key) and key != "dummy"
+
+
+def candidate_llms() -> list:
+    """Every model we are willing to try, in preference order."""
+    candidates = []
+    if _has(groq_api_key):
+        models = list(dict.fromkeys([GROQ_MODEL, *GROQ_FALLBACK_MODELS]))
+        candidates += [
+            ChatCompletionLLM(model=m, api_key=groq_api_key, base_url=GROQ_BASE_URL)
+            for m in models
+        ]
+    if _has(openai_api_key):
+        candidates.append(
+            ChatCompletionLLM(model=OPENAI_MODEL, api_key=openai_api_key, base_url=OPENAI_BASE_URL)
+        )
+    return candidates
+
+
 def get_llm():
-    """Return the best available LLM. Groq is primary, OpenAI is fallback."""
-    if groq_api_key and groq_api_key != "dummy":
-        return Groq(model="llama-3.3-70b-versatile", api_key=groq_api_key, max_retries=0, request_timeout=15.0)
-    elif openai_api_key and openai_api_key != "dummy":
-        return OpenAI(model="gpt-3.5-turbo", api_key=openai_api_key, max_retries=0, timeout=15.0)
-    else:
-        return None
+    """Return the preferred LLM, or None when no key is configured."""
+    candidates = candidate_llms()
+    return candidates[0] if candidates else None
 
-# ─── Embedding Model (API-based, lightweight for production) ────────
-# Note: max_retries=0 and timeout=10.0 prevents silent hanging and Gateway Timeouts
-# if the OpenAI API is rate-limiting us (429) or taking too long.
-embedding_model = OpenAIEmbedding(api_key=openai_api_key, max_retries=0, timeout=10.0)
-Settings.embed_model = embedding_model
 
-# Set the LLM globally if available
-_llm = get_llm()
-if _llm:
-    Settings.llm = _llm
+def complete_with_fallback(prompt: str) -> str:
+    """Complete `prompt` with the first model that answers.
+
+    Walks the candidate chain so a retired Groq model or an exhausted OpenAI
+    quota degrades to the next option instead of failing the whole request.
+    """
+    failures = []
+    for llm in candidate_llms():
+        name = getattr(llm, "model", type(llm).__name__)
+        try:
+            return llm.complete(prompt).text
+        except Exception as exc:
+            failures.append(f"{name}: {exc}")
+            logger.warning(f"LLM {name} failed ({type(exc).__name__}); trying next candidate.")
+    raise LLMUnavailableError(
+        "; ".join(failures) or "No LLM configured. Set GROQ_API_KEY or OPENAI_API_KEY."
+    )
+
+
+# ─── Embeddings (API first, deterministic local fallback) ────────────
+_WORD_RE = re.compile(r"[a-z0-9_]+")
+LOCAL_EMBED_DIM = 512
+
+
+class HashingEmbedding(BaseEmbedding):
+    """Dependency-free embedding used when no embedding API is reachable.
+
+    Hashes unigrams and bigrams into a fixed-width L2-normalised vector. This
+    is lexical, not semantic, so retrieval quality is lower than a real
+    embedding model — but it needs no API key, no quota and no torch, which
+    keeps similar-incident retrieval alive offline and on a free dyno.
+    """
+
+    dim: int = LOCAL_EMBED_DIM
+
+    @classmethod
+    def class_name(cls) -> str:
+        return "hashing_embedding"
+
+    def _vector(self, text: str) -> List[float]:
+        vec = [0.0] * self.dim
+        tokens = _WORD_RE.findall((text or "").lower())
+        grams = tokens + [f"{a}_{b}" for a, b in zip(tokens, tokens[1:])]
+        for gram in grams:
+            digest = hashlib.blake2b(gram.encode(), digest_size=8).digest()
+            index = int.from_bytes(digest[:4], "big") % self.dim
+            sign = 1.0 if digest[4] % 2 else -1.0
+            vec[index] += sign
+        norm = math.sqrt(sum(v * v for v in vec))
+        if norm == 0.0:
+            return vec
+        return [v / norm for v in vec]
+
+    def _get_query_embedding(self, query: str) -> List[float]:
+        return self._vector(query)
+
+    def _get_text_embedding(self, text: str) -> List[float]:
+        return self._vector(text)
+
+    async def _aget_query_embedding(self, query: str) -> List[float]:
+        return self._vector(query)
+
+    async def _aget_text_embedding(self, text: str) -> List[float]:
+        return self._vector(text)
+
+
+_embed_backend: Optional[str] = None
+
+
+def embedding_backend() -> str:
+    """Resolve the embedding backend once, lazily.
+
+    Lazy on purpose: probing the API at import time would make every process
+    that merely imports this module (including the test suite) hit the network.
+    """
+    global _embed_backend
+    if _embed_backend is not None:
+        return _embed_backend
+
+    if _has(openai_api_key):
+        try:
+            model = OpenAIEmbedding(api_key=openai_api_key, max_retries=0, timeout=10.0)
+            model.get_text_embedding("healthcheck")
+            Settings.embed_model = model
+            _embed_backend = "openai"
+            logger.info("Embeddings: OpenAI API")
+            return _embed_backend
+        except Exception as exc:
+            logger.warning(
+                f"OpenAI embeddings unavailable ({type(exc).__name__}: {exc}). "
+                "Falling back to local hashing embeddings — retrieval is lexical, not semantic."
+            )
+
+    Settings.embed_model = HashingEmbedding()
+    _embed_backend = "local"
+    logger.info("Embeddings: local hashing (no API key or quota)")
+    return _embed_backend
+
+
+def _collection_name() -> str:
+    """Vectors of different widths cannot share a Chroma collection, so each
+    embedding backend gets its own."""
+    return "incidents" if embedding_backend() == "openai" else "incidents_local_v1"
+
+
+# `Settings.llm` is intentionally left unset. Retrieval in this module is
+# embedding-only — documents are added and queried through a retriever, never a
+# query engine — so llama-index never needs an LLM object. Assigning one would
+# only force the heavy `llama_index.llms.*` import back in. Completion goes
+# through ChatCompletionLLM / complete_with_fallback instead.
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -384,8 +588,7 @@ Provide a comprehensive analysis:
 Be specific, technical, and actionable. Reference actual metric values.
 """
     try:
-        response = llm.complete(prompt)
-        return response.text
-    except Exception as e:
+        return complete_with_fallback(prompt)
+    except LLMUnavailableError as e:
         logger.error(f"LLM call failed: {e}")
         return f"LLM call failed: {str(e)}"

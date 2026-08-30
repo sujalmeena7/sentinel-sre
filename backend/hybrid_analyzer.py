@@ -35,6 +35,37 @@ class Hypothesis:
     category: str = "unknown"
 
 
+# Ranking weight per source. A matched rule names a *cause* from an explicit
+# failure signature; an anomaly only says a metric left its baseline, which is
+# usually a *symptom* of the same failure. Weighting keeps the two on a
+# comparable footing when they are sorted together.
+SOURCE_WEIGHTS = {
+    "rules": 1.0,
+    "rag": 0.9,
+    "llm": 0.9,
+    "anomaly": 0.8,
+}
+
+
+def rank_hypotheses(hypotheses: List[Hypothesis]) -> List[Hypothesis]:
+    """Order hypotheses by source-weighted confidence and assign 1-based ranks.
+
+    Raw confidence alone ranked "Anomalous memory_usage" (a symptom) above
+    "[RULE-002] Memory Leak / OOM Kill" (a cause), because both scores use the
+    same 0-100 scale while meaning different things. Weighting lets a
+    deterministic signature match win close calls without silencing a dominant
+    anomaly that outranks a weak rule.
+    """
+    ordered = sorted(
+        hypotheses,
+        key=lambda h: (h.confidence * SOURCE_WEIGHTS.get(h.source, 1.0), h.confidence),
+        reverse=True,
+    )
+    for position, hypothesis in enumerate(ordered, start=1):
+        hypothesis.rank = position
+    return ordered
+
+
 @dataclass
 class HybridAnalysisResult:
     hypotheses: List[Hypothesis] = field(default_factory=list)
@@ -131,7 +162,7 @@ def run_hybrid_analysis(
 
     # ─── STEP 2: Anomaly Scoring ─────────────────────────────────
     reasoning_chain.append("📊 Step 2: Running statistical anomaly scorer...")
-    anomaly_report = AnomalyReport(anomalies={}, summary="", overall_anomaly_score=0.0)
+    anomaly_report = AnomalyReport(anomalies=[], summary="", overall_anomaly_score=0.0)
     try:
         anomaly_report = _run_with_timeout(
             score_anomalies, 30, "Anomaly Scoring", signals, symptoms
@@ -226,14 +257,9 @@ def run_hybrid_analysis(
         logger.exception("LLM Synthesis step failed")
 
     # ─── STEP 5: Rank & Finalize ─────────────────────────────────
-    reasoning_chain.append("🏆 Step 5: Ranking hypotheses by confidence...")
+    reasoning_chain.append("🏆 Step 5: Ranking hypotheses by weighted confidence...")
 
-    # Sort all hypotheses by confidence
-    all_hypotheses.sort(key=lambda h: h.confidence, reverse=True)
-
-    # Assign ranks
-    for i, hyp in enumerate(all_hypotheses):
-        hyp.rank = i + 1
+    all_hypotheses = rank_hypotheses(all_hypotheses)
 
     # Take top 5
     top_hypotheses = all_hypotheses[:5]

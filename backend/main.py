@@ -1,5 +1,6 @@
 
 import os
+import sys
 import asyncio
 import threading
 import logging
@@ -7,9 +8,9 @@ import re
 import httpx
 from concurrent.futures import ThreadPoolExecutor
 from collections import deque
+from contextlib import asynccontextmanager
 from urllib.parse import urlparse
-from fastapi import FastAPI, Depends, BackgroundTasks, HTTPException, Security, Request
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi import FastAPI, Depends, BackgroundTasks, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlmodel import Session, select
@@ -25,7 +26,7 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from dotenv import load_dotenv
 from models import Incident, User
-from database import init_db, get_session, engine
+from database import init_db, get_session, engine, db_healthy, _is_production as _is_production_env
 from rag_engine import add_incident_to_index, query_similar_incidents, generate_hypothesis, update_incident_in_index
 from hybrid_analyzer import run_hybrid_analysis
 from data_generator import generate_deterministic_incident
@@ -41,12 +42,69 @@ from auth_utils import (
     get_current_user,
     get_user_by_webhook_token,
 )
-from email_service import send_verification_email, send_password_reset_email
+from email_service import send_verification_email, send_password_reset_email, email_delivery_configured
 
 load_dotenv()
+
+# Windows consoles default to a legacy codepage (cp1252). Log records and
+# generated narratives contain non-ASCII characters (em dashes, sigma, status
+# emoji), which would raise UnicodeEncodeError mid-request. Force UTF-8 on the
+# std streams before logging is configured.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
-app = FastAPI(title="AI Root Cause Analyzer", version="0.3.0")
+
+
+STARTUP_STATUS: Dict[str, str] = {}
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """Boot the app without ever letting one broken subsystem take it down.
+
+    Every step is isolated. An unguarded failure here (an expired Postgres, a
+    bad DATABASE_URL) killed the worker before it bound a port, which the host
+    surfaced as a bare 502 with no application log — impossible to diagnose from
+    outside the box. Now each step records its outcome in STARTUP_STATUS, /health
+    reports it, and the process still serves traffic.
+
+    The vector backfill is deliberately NOT awaited: it embeds up to 60
+    incidents, and anything slow on this path delays port binding past the
+    platform's deploy timeout and fails the release.
+    """
+    for step, fn in (
+        ("database", init_db),
+        ("admin_seed", _seed_admin_and_backfill),
+        ("stale_tasks", _reap_stale_tasks),
+    ):
+        try:
+            fn()
+            STARTUP_STATUS[step] = "ok"
+        except Exception as exc:
+            STARTUP_STATUS[step] = f"failed: {type(exc).__name__}: {str(exc)[:200]}"
+            logger.exception(f"Startup step '{step}' failed — continuing so /health stays reachable")
+
+    def _deferred_backfill() -> None:
+        try:
+            _backfill_vector_index()
+            STARTUP_STATUS["vector_backfill"] = "ok"
+        except Exception as exc:
+            STARTUP_STATUS["vector_backfill"] = f"failed: {type(exc).__name__}"
+            logger.warning(f"Vector backfill failed: {exc}")
+
+    STARTUP_STATUS["vector_backfill"] = "running"
+    threading.Thread(target=_deferred_backfill, name="vector-backfill", daemon=True).start()
+
+    logger.info(f"Startup complete: {STARTUP_STATUS}")
+    yield
+
+
+app = FastAPI(title="AI Root Cause Analyzer", version="0.3.0", lifespan=lifespan)
 
 limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
@@ -81,16 +139,42 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(SecurityHeadersMiddleware)
 
+# Allowed browser origins. Defaults cover local dev + the deployed Vercel apps;
+# ALLOWED_ORIGINS (comma-separated) adds to them at deploy time.
+#
+# `sentinelsre.vercel.app` (no hyphens) is the canonical production domain — the
+# other two redirect to it. It was missing here AND unmatched by the regex
+# below, so every browser call from the live site was CORS-blocked while
+# localhost worked fine: the classic "works on my machine" deploy failure.
+_DEFAULT_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:5173",
+    "https://sentinelsre.vercel.app",
+    "https://sentinel-sre.vercel.app",
+    "https://sentinel-sre-zeta.vercel.app",
+]
+
+# Vercel preview deploys get generated subdomains, so they need a pattern rather
+# than a list. Both spellings of the project name are allowed; the trailing
+# group covers preview suffixes like `-git-main-user.vercel.app`.
+_ORIGIN_REGEX = r"https://sentinel-?sre[a-z0-9-]*\.vercel\.app"
+
+
+def _allowed_origins() -> List[str]:
+    configured = [
+        o.strip().rstrip("/")
+        for o in os.getenv("ALLOWED_ORIGINS", "").split(",")
+        if o.strip()
+    ]
+    # Dedupe while preserving order.
+    return list(dict.fromkeys(_DEFAULT_ORIGINS + configured))
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://localhost:5173",
-        "https://sentinel-sre.vercel.app",
-    ],
-    # Tightened regex: only allows sentinel-sre followed by optional
-    # Vercel preview suffixes (alphanumeric + hyphens), not arbitrary subdomains.
-    allow_origin_regex=r"https://sentinel-sre[a-z0-9-]*\.vercel\.app",
+    allow_origins=_allowed_origins(),
+    allow_origin_regex=_ORIGIN_REGEX,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -100,14 +184,70 @@ app.add_middleware(
 # ─── Health Check (lightweight, no DB/LLM) ───────────────────────────
 @app.get("/health")
 def health_check():
-    """Lightweight health check for uptime monitoring. No DB or LLM calls."""
+    """Lightweight health check for uptime monitoring. No DB or LLM calls.
+
+    Deliberately does not touch the database: this is what the platform polls to
+    decide whether the instance is live, so it must stay fast and must never fail
+    for a reason that a restart cannot fix.
+    """
     return {"status": "ok", "version": "0.3.0"}
 
 
 @app.get("/api/v1/health")
 def health_check_v1():
-    """Versioned health check endpoint."""
-    return {"status": "ok", "version": "0.3.0"}
+    """Versioned health check. Reports degradation without leaking details."""
+    degraded = [k for k, v in STARTUP_STATUS.items() if v.startswith("failed")]
+    return {
+        "status": "ok",
+        "version": "0.3.0",
+        "degraded": bool(degraded),
+        "degraded_subsystems": degraded,
+    }
+
+
+@app.get("/api/v1/diagnostics")
+def diagnostics(request: Request):
+    """Explain *why* a deploy is unhealthy, without exposing secrets.
+
+    Guarded by DIAGNOSTICS_TOKEN rather than a JWT on purpose: the situation this
+    endpoint exists for is "the database is down so nobody can log in", where
+    requiring a login would make it useless. Values are never returned — only
+    whether a key is present, backend names, and truncated error types.
+    """
+    expected = os.getenv("DIAGNOSTICS_TOKEN", "")
+    if expected:
+        supplied = request.query_params.get("token") or request.headers.get("X-Diagnostics-Token", "")
+        if not hmac.compare_digest(supplied, expected):
+            raise HTTPException(status_code=404, detail="Not found")
+    elif _is_production_env():
+        raise HTTPException(
+            status_code=404,
+            detail="Not found",
+        )
+
+    db_ok, db_detail = db_healthy()
+    try:
+        from rag_engine import embedding_backend, vector_count
+        embed_backend = embedding_backend()
+        vectors = vector_count()
+    except Exception as exc:
+        embed_backend = f"unavailable ({type(exc).__name__})"
+        vectors = -1
+
+    return {
+        "version": "0.3.0",
+        "startup": STARTUP_STATUS,
+        "database": {"ok": db_ok, "backend": db_detail if db_ok else "error", "error": None if db_ok else db_detail},
+        "vector_store": {"embedding_backend": embed_backend, "vectors": vectors},
+        "providers": {
+            "groq_key_present": bool(os.getenv("GROQ_API_KEY", "").strip()),
+            "openai_key_present": bool(os.getenv("OPENAI_API_KEY", "").strip()),
+            "groq_model": os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
+            "mail_configured": email_delivery_configured(),
+        },
+        "cors_allowed_origins": _allowed_origins(),
+        "cors_origin_regex": _ORIGIN_REGEX,
+    }
 
 
 class IncidentIngest(BaseModel):
@@ -168,25 +308,6 @@ def launch_background(func, *args, **kwargs) -> None:
     _background_pool.submit(func, *args, **kwargs)
 
 
-security = HTTPBearer()
-
-
-def verify_telemetry_token(credentials: HTTPAuthorizationCredentials = Security(security)):
-    expected_token = os.getenv("TELEMETRY_SECRET_TOKEN", "")
-    if not expected_token or expected_token == "change-me-in-production":
-        raise HTTPException(
-            status_code=503,
-            detail="Telemetry endpoint not configured. Set TELEMETRY_SECRET_TOKEN in environment.",
-        )
-    if not hmac.compare_digest(credentials.credentials, expected_token):
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid telemetry authentication token",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    return credentials.credentials
-
-
 class PrometheusAlert(BaseModel):
     status: str
     labels: Dict[str, str] = {}
@@ -199,13 +320,6 @@ class PrometheusPayload(BaseModel):
     receiver: str
     status: str
     alerts: List[PrometheusAlert] = []
-
-
-@app.on_event("startup")
-def on_startup():
-    init_db()
-    _seed_admin_and_backfill()
-    _reap_stale_tasks()
 
 
 def _reap_stale_tasks() -> None:
@@ -228,14 +342,46 @@ def _reap_stale_tasks() -> None:
             logger.info(f"Reaped {len(stale)} stale processing tasks")
 
 
+# The login/register schemas validate email with Pydantic's EmailStr, which
+# rejects reserved TLDs like `.local`. Older builds seeded `admin@sentinel.local`,
+# producing an admin account that could never sign in (HTTP 422 at /auth/login).
+DEFAULT_ADMIN_EMAIL = "admin@sentinel-sre.dev"
+LEGACY_ADMIN_EMAILS = ("admin@sentinel.local",)
+_RESERVED_EMAIL_SUFFIXES = (".local", ".localhost", ".invalid", ".test", ".example")
+
+
+def _migrate_legacy_admin_email(session: Session, admin_email: str) -> None:
+    """Rename a legacy un-loggable admin row to the current admin email so the
+    account (and every incident it owns) stays usable."""
+    if admin_email in LEGACY_ADMIN_EMAILS:
+        return
+    if session.exec(select(User).where(User.email == admin_email)).first():
+        return  # Target already exists; leave the legacy row alone.
+    for legacy_email in LEGACY_ADMIN_EMAILS:
+        legacy = session.exec(select(User).where(User.email == legacy_email)).first()
+        if legacy is not None:
+            legacy.email = admin_email
+            legacy.email_verified = True
+            session.add(legacy)
+            session.commit()
+            logger.info(f"Migrated legacy admin {legacy_email} -> {admin_email}")
+            return
+
+
 def _seed_admin_and_backfill() -> None:
-    admin_email = os.getenv("ADMIN_EMAIL", "admin@sentinel.local").strip().lower()
+    admin_email = os.getenv("ADMIN_EMAIL", DEFAULT_ADMIN_EMAIL).strip().lower()
     admin_password = os.getenv("ADMIN_PASSWORD", "")
+
+    if admin_email.endswith(_RESERVED_EMAIL_SUFFIXES):
+        logger.error(
+            f"ADMIN_EMAIL '{admin_email}' uses a reserved TLD and will be rejected "
+            f"by /auth/login validation. Falling back to {DEFAULT_ADMIN_EMAIL}."
+        )
+        admin_email = DEFAULT_ADMIN_EMAIL
 
     # Refuse to seed with a weak/default password in production
     if not admin_password or admin_password in ("admin123", "password", "changeme"):
-        env = os.getenv("APP_ENV", "").lower() or os.getenv("ENV", "").lower()
-        if env in {"production", "prod"} or os.getenv("RENDER") or os.getenv("VERCEL"):
+        if _is_production_env():
             logger.error(
                 "ADMIN_PASSWORD is not set or is a known weak default. "
                 "Refusing to seed admin in production. Set a strong ADMIN_PASSWORD."
@@ -245,9 +391,10 @@ def _seed_admin_and_backfill() -> None:
         if not admin_password:
             import secrets
             admin_password = secrets.token_urlsafe(16)
-            logger.warning(f"ADMIN_PASSWORD not set — using random dev password: {admin_password}")
+            logger.warning(f"ADMIN_PASSWORD not set - using random dev password: {admin_password}")
 
     with Session(engine) as session:
+        _migrate_legacy_admin_email(session, admin_email)
         admin = session.exec(select(User).where(User.email == admin_email)).first()
         if admin is None:
             raw_webhook = generate_webhook_token()
@@ -283,6 +430,33 @@ def _seed_admin_and_backfill() -> None:
                 session.add(inc)
             session.commit()
             logger.info(f"Backfilled {len(orphan_count)} legacy incidents -> admin.")
+
+
+def _backfill_vector_index(limit: int = 60) -> None:
+    """Populate the vector store when it is empty but the DB already has data.
+
+    Needed after a fresh clone (chroma_db is not committed) and after an
+    embedding-backend switch, which starts a new collection. Without this the
+    "similar incidents" panel stays empty until new incidents arrive.
+    """
+    if os.getenv("RAG_INDEX_BACKFILL", "1") == "0":
+        return
+    try:
+        from rag_engine import vector_count
+
+        if vector_count() > 0:
+            return
+        with Session(engine) as session:
+            incidents = session.exec(
+                select(Incident).order_by(Incident.start_time.desc()).limit(limit)
+            ).all()
+            for incident in incidents:
+                add_incident_to_index(incident)
+        if incidents:
+            logger.info(f"Backfilled {len(incidents)} incidents into the vector index.")
+    except Exception as exc:
+        # Retrieval is an enhancement, never a startup blocker.
+        logger.warning(f"Vector index backfill skipped: {type(exc).__name__}: {exc}")
 
 
 @app.get("/")
@@ -321,7 +495,7 @@ class AuthResponse(BaseModel):
     webhook_token: Optional[str] = None
 
 
-def _public_user(user: User, webhook_token: Optional[str] = None) -> Dict[str, Any]:
+def _public_user(user: User) -> Dict[str, Any]:
     return {
         "id": user.id,
         "email": user.email,
@@ -332,9 +506,16 @@ def _public_user(user: User, webhook_token: Optional[str] = None) -> Dict[str, A
     }
 
 
-def _allow_unverified_login() -> bool:
-    """Feature flag: when true, unverified users may still log in (legacy behaviour)."""
-    return os.getenv("ALLOW_UNVERIFIED_LOGIN", "").lower() == "true"
+def _verification_required() -> bool:
+    """
+    Email verification is only enforced when a mail provider is actually
+    configured. Without SMTP/SES the verification link is written to the server
+    log only, so enforcing it would lock every new signup out of their own
+    account. ALLOW_UNVERIFIED_LOGIN=true disables the gate outright.
+    """
+    if os.getenv("ALLOW_UNVERIFIED_LOGIN", "").lower() == "true":
+        return False
+    return email_delivery_configured()
 
 
 @app.post("/api/v1/auth/register", response_model=AuthResponse)
@@ -353,22 +534,28 @@ def register(
         raise HTTPException(status_code=409, detail="An account with this email already exists")
 
     raw_webhook = generate_webhook_token()
+    verification_required = _verification_required()
     user = User(
         email=email,
         password_hash=hash_password(body.password),
         webhook_token_hash=hash_webhook_token(raw_webhook),
         name=body.name,
         role="user",
-        email_verified=False,
+        # Without a mail provider there is no way for the user to ever confirm,
+        # so treat the address as verified instead of creating a dead account.
+        email_verified=not verification_required,
     )
     session.add(user)
     session.commit()
     session.refresh(user)
 
-    # Send verification email out-of-band so registration stays snappy.
-    verify_token = create_verification_token(user.id, user.email)
-    background_tasks.add_task(send_verification_email, user.email, verify_token, user.name)
-    logger.info(f"User registered (unverified): {email}")
+    if verification_required:
+        # Send verification email out-of-band so registration stays snappy.
+        verify_token = create_verification_token(user.id, user.email)
+        background_tasks.add_task(send_verification_email, user.email, verify_token, user.name)
+        logger.info(f"User registered (unverified): {email}")
+    else:
+        logger.info(f"User registered (auto-verified, no mail provider configured): {email}")
 
     # We DO return an access token so the user can land on a "check your email"
     # screen, but every protected endpoint will still work because the access
@@ -391,11 +578,18 @@ def login(request: Request, body: LoginRequest, session: Session = Depends(get_s
     if not user or not verify_password(body.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
-    if not user.email_verified and not _allow_unverified_login():
-        raise HTTPException(
-            status_code=403,
-            detail="Email not verified. Please check your inbox or request a new verification link.",
-        )
+    if not user.email_verified:
+        if _verification_required():
+            raise HTTPException(
+                status_code=403,
+                detail="Email not verified. Please check your inbox or request a new verification link.",
+            )
+        # No mail provider configured — the account can never be confirmed by
+        # the user, so settle the flag now to keep client state consistent.
+        user.email_verified = True
+        session.add(user)
+        session.commit()
+        session.refresh(user)
 
     token = create_access_token(user.id, user.email)
     logger.info(f"Login: {email}")
@@ -1225,8 +1419,7 @@ def _teams_payload(markdown: str, incident: Incident) -> Dict[str, Any]:
 
 
 async def _generate_postmortem_markdown(incident_id: str, session: Session) -> str:
-    import traceback
-    from rag_engine import get_llm
+    from rag_engine import complete_with_fallback, LLMUnavailableError
 
     incident = session.get(Incident, incident_id)
     if not incident:
@@ -1421,13 +1614,55 @@ Constraints:
 - Output clean Markdown only
 """
 
-    llm = get_llm()
-    if llm is None:
-        raise HTTPException(status_code=503, detail="No LLM configured. Set GROQ_API_KEY or OPENAI_API_KEY.")
+    try:
+        markdown = await asyncio.to_thread(complete_with_fallback, prompt)
+        logger.info(f"Postmortem generated for incident {incident_id}")
+        return markdown
+    except LLMUnavailableError as exc:
+        # A 500 here used to lose the whole document. Every fact in the
+        # postmortem except the prose already exists locally, so fall back to a
+        # data-only version and say so at the top.
+        logger.warning(f"Postmortem LLM unavailable for {incident_id}: {exc}")
+        return f"""# Incident Postmortem — {service}
 
-    response = await asyncio.to_thread(llm.complete, prompt)
-    logger.info(f"Postmortem generated for incident {incident_id}")
-    return response.text
+> **Note:** generated without AI narration ({str(exc)[:200]}). Every section below
+> comes from the recorded incident data and the deterministic analysis layers.
+
+## Summary
+- **Service:** `{service}` ({environment})
+- **Severity:** {severity}
+- **Detected via:** {detection_source}
+- **Root cause:** {root_cause}
+
+## Timeline
+{timeline_str}
+
+## Impact
+- **Symptoms:** {symptoms}
+- **Blast radius:** {blast_radius}
+
+## Evidence
+### Signals
+{signals_text}
+### Recent changes
+{changes_text}
+### Anomaly scoring
+{anomaly_summary}
+
+## Ranked Hypotheses
+{hypotheses_text}
+
+## Reasoning Chain
+{reasoning_summary}
+
+## Remediation
+### Applied
+- {fixes}
+### Short-term
+{suggested_fixes_short}
+### Long-term
+{suggested_fixes_long}
+"""
 
 
 @app.post("/api/v1/incidents/{incident_id}/postmortem")

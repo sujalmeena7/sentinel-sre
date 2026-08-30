@@ -9,8 +9,9 @@
 // relative "/api/v1" path which is rewritten by next.config.mjs to
 // http://127.0.0.1:8000 during `next dev`.
 //
-// CORS: the backend already allows `*` origins with credentials off,
-// so direct browser → Render calls work without any server changes.
+// CORS: the backend allows an explicit origin list (localhost, the Vercel
+// app, plus anything in ALLOWED_ORIGINS) with credentials enabled, so
+// direct browser → Render calls work once the origin is on that list.
 // ─────────────────────────────────────────────────────────────
 import { readAuthToken, forceLogoutOn401 } from '@/contexts/AuthContext';
 
@@ -43,6 +44,22 @@ async function authFetch(input: string, init: RequestInit = {}): Promise<Respons
     if (!isAuthRoute) forceLogoutOn401();
   }
   return res;
+}
+
+/**
+ * Build an Error carrying the backend's `detail` message when there is one.
+ * FastAPI validation/permission failures explain themselves; surfacing that
+ * text beats a generic "request failed" in the UI.
+ */
+async function errorFromResponse(res: Response, fallback: string): Promise<Error> {
+  try {
+    const body = await res.json();
+    const detail = typeof body?.detail === 'string' ? body.detail : null;
+    if (detail) return new Error(detail);
+  } catch {
+    /* non-JSON body — fall through */
+  }
+  return new Error(`${fallback} (HTTP ${res.status})`);
 }
 
 export interface Incident {
@@ -163,7 +180,7 @@ export async function triggerSimulation(service: string, failure_type: string, s
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ service, failure_type, severity }),
   });
-  if (!res.ok) throw new Error('Failed to trigger simulation');
+  if (!res.ok) throw await errorFromResponse(res, 'Failed to trigger simulation');
   return res.json();
 }
 

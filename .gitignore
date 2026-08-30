@@ -7,6 +7,11 @@ backend/incidents.db
 backend/chroma_db/
 backend/.pytest_cache/
 
+# Python bytecode anywhere (the rules above only match the top backend dir,
+# so backend/tests/__pycache__/ was showing up as untracked).
+__pycache__/
+*.py[cod]
+
 # Frontend
 frontend/node_modules/
 frontend/.next/

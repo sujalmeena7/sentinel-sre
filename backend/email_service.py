@@ -49,6 +49,15 @@ def _ses_configured() -> bool:
     return bool(os.getenv("AWS_ACCESS_KEY_ID") and os.getenv("AWS_SECRET_ACCESS_KEY"))
 
 
+def email_delivery_configured() -> bool:
+    """
+    True when a real provider (SMTP or SES) is wired up. When False, every
+    email only reaches the server log, so features that depend on a user
+    receiving a link (email verification) cannot be enforced.
+    """
+    return _smtp_configured() or _ses_configured()
+
+
 def _send_via_ses(to: str, subject: str, text_body: str, html_body: Optional[str] = None) -> bool:
     """Send via AWS SES v2 API (HTTPS port 443 — works on Render free tier)."""
     try:

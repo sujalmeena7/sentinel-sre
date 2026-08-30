@@ -7,8 +7,9 @@ Works entirely without ML models — pure statistics.
 """
 
 from dataclasses import dataclass, field
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Iterable, Tuple
 import math
+import re
 
 
 @dataclass
@@ -38,23 +39,97 @@ class AnomalyReport:
 METRIC_BASELINES = {
     "cpu_usage": {"mean": 45.0, "std": 15.0, "unit": "%"},
     "memory_usage": {"mean": 55.0, "std": 12.0, "unit": "%"},
-    "latency_p99": {"mean": 120.0, "std": 40.0, "unit": "ms"},
+    "latency_p99": {"mean": 180.0, "std": 90.0, "unit": "ms"},
     "error_rate": {"mean": 0.5, "std": 0.3, "unit": "%"},
     "request_rate": {"mean": 1000.0, "std": 200.0, "unit": "req/s"},
     "connection_pool_usage": {"mean": 40.0, "std": 15.0, "unit": "%"},
+    "active_db_connections": {"mean": 150.0, "std": 60.0, "unit": " conns"},
     "disk_io": {"mean": 30.0, "std": 10.0, "unit": "MB/s"},
     "network_bytes_in": {"mean": 50.0, "std": 20.0, "unit": "MB/s"},
 }
 
+# Alternate names emitted by chaos simulation, Prometheus alert labels and
+# hand-written ingests. Each maps onto one of the baselines above so the
+# scorer never silently drops a metric it could have scored.
+METRIC_ALIASES = {
+    "cpu": "cpu_usage",
+    "cpu_utilization": "cpu_usage",
+    "cpu_percent": "cpu_usage",
+    "container_cpu": "cpu_usage",
+    "memory": "memory_usage",
+    "mem": "memory_usage",
+    "memory_percent": "memory_usage",
+    "container_memory": "memory_usage",
+    "heap_usage": "memory_usage",
+    "latency": "latency_p99",
+    "network_latency_ms": "latency_p99",
+    "response_time": "latency_p99",
+    "p99": "latency_p99",
+    "p95": "latency_p99",
+    "duration_ms": "latency_p99",
+    "errors": "error_rate",
+    "error_percent": "error_rate",
+    "5xx_rate": "error_rate",
+    "rps": "request_rate",
+    "qps": "request_rate",
+    "throughput": "request_rate",
+    "db_connections": "active_db_connections",
+    "open_connections": "active_db_connections",
+    "pool_usage": "connection_pool_usage",
+    "disk": "disk_io",
+    "iops": "disk_io",
+    "network_in": "network_bytes_in",
+}
 
-def _parse_numeric(value: str) -> Optional[float]:
-    """Extract a numeric value from strings like '99%', '120ms', '1500 req/s'."""
-    cleaned = ""
-    for char in str(value):
-        if char.isdigit() or char == '.':
-            cleaned += char
+# Keys whose *value* is free text worth scanning for error patterns rather
+# than a number to score.
+_TEXT_SIGNAL_KEYS = ("log", "logs", "event", "error", "message", "msg", "trace", "description")
+
+# Keys that name the metric in a {"metric": ..., "value": ...} style signal.
+_METRIC_NAME_KEYS = ("metric", "metric_name", "name", "key", "metric_key")
+_METRIC_VALUE_KEYS = ("value", "val", "current_value", "reading", "amount")
+
+_NUMBER_RE = re.compile(r"-?\d+(?:[.,]\d+)?")
+
+
+def _normalize_key(name: Any) -> str:
+    """Lowercase and collapse separators so 'Memory Usage' == 'memory_usage'."""
+    return re.sub(r"[\s\-./]+", "_", str(name).strip().lower())
+
+
+def _resolve_metric(name: Any) -> Optional[str]:
+    """
+    Map an arbitrary metric name onto a known baseline key.
+    Tries exact match, then alias match, then substring match in both
+    directions (so 'node_memory_usage_percent' still resolves).
+    """
+    key = _normalize_key(name)
+    if not key:
+        return None
+    if key in METRIC_BASELINES:
+        return key
+    if key in METRIC_ALIASES:
+        return METRIC_ALIASES[key]
+    for baseline_name in METRIC_BASELINES:
+        if baseline_name in key:
+            return baseline_name
+    for alias, baseline_name in METRIC_ALIASES.items():
+        if alias in key:
+            return baseline_name
+    return None
+
+
+def _parse_numeric(value: Any) -> Optional[float]:
+    """Extract a numeric value from strings like '99%', '120ms', '-3.5', '1,500 req/s'."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    match = _NUMBER_RE.search(str(value))
+    if not match:
+        return None
     try:
-        return float(cleaned) if cleaned else None
+        return float(match.group(0).replace(",", "."))
     except ValueError:
         return None
 
@@ -79,6 +154,35 @@ def _severity_from_z(z: float) -> str:
         return "critical"
 
 
+def _iter_signal_pairs(signal: Dict[str, Any]) -> Iterable[Tuple[str, Any]]:
+    """
+    Yield (metric_name, value) pairs from a single signal dict, supporting both
+    shapes we ingest:
+
+      A) {"metric": "memory_usage", "value": "99%"}   ← chaos sim / Prometheus
+      B) {"memory_usage": "99%"}                       ← flat manual ingest
+
+    Free-text keys ("log", "event", ...) are yielded untouched so the caller
+    can scan them for error patterns.
+    """
+    name_key = next((k for k in signal if _normalize_key(k) in _METRIC_NAME_KEYS), None)
+    value_key = next((k for k in signal if _normalize_key(k) in _METRIC_VALUE_KEYS), None)
+
+    if name_key is not None and value_key is not None:
+        # Shape A — the dict *describes* one metric.
+        yield str(signal[name_key]), signal[value_key]
+        # Still surface any accompanying free-text field on the same dict.
+        for key, value in signal.items():
+            if key in (name_key, value_key):
+                continue
+            yield key, value
+        return
+
+    # Shape B — every key is itself a metric name (or a text signal).
+    for key, value in signal.items():
+        yield key, value
+
+
 def score_anomalies(
     signals: List[Dict[str, Any]],
     symptoms: List[str] = None,
@@ -91,17 +195,12 @@ def score_anomalies(
     anomalies: List[AnomalyScore] = []
     temporal_signals: List[str] = []
 
-    for signal in signals:
-        for key, value in signal.items():
-            # Try to match the key to a known baseline metric
-            metric_key = None
-            for baseline_name in METRIC_BASELINES:
-                if baseline_name in key.lower().replace(" ", "_"):
-                    metric_key = baseline_name
-                    break
-
-            # If we can parse a numeric value, compute the anomaly score
-            numeric_val = _parse_numeric(str(value))
+    for signal in signals or []:
+        if not isinstance(signal, dict):
+            continue
+        for key, value in _iter_signal_pairs(signal):
+            metric_key = _resolve_metric(key)
+            numeric_val = _parse_numeric(value)
 
             if metric_key and numeric_val is not None:
                 baseline = METRIC_BASELINES[metric_key]
@@ -120,7 +219,7 @@ def score_anomalies(
                 )
                 anomalies.append(anomaly)
 
-            elif key.lower() in ("log", "event", "error", "message", "trace"):
+            elif _normalize_key(key) in _TEXT_SIGNAL_KEYS:
                 # Non-numeric signals: check for error patterns
                 if value is None:
                     continue

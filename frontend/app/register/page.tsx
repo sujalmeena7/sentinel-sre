@@ -44,9 +44,11 @@ export default function RegisterPage() {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const needsVerification = !!user && user.email_verified === false;
+
   const continueToDashboard = () => {
     clearWebhookToken();
-    if (user && !user.email_verified) {
+    if (needsVerification) {
       router.push('/login');
     } else {
       router.push('/dashboard');
@@ -103,12 +105,18 @@ export default function RegisterPage() {
               <div className="mt-2">You can always rotate this token from the user menu.</div>
             </div>
 
+            {needsVerification && (
+              <div className="mt-4 rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-amber-200/80">
+                We sent a confirmation link to <strong className="text-amber-100">{user.email}</strong>. Confirm it, then sign in.
+              </div>
+            )}
+
             <button
               onClick={continueToDashboard}
               data-testid="continue-to-dashboard-button"
               className="mt-6 w-full inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium bg-white text-black hover:bg-white/90 shadow-[0_0_40px_rgba(255,255,255,0.15)] transition-all"
             >
-              Continue to dashboard <ArrowRight className="w-4 h-4" />
+              {needsVerification ? 'Continue to sign in' : 'Continue to dashboard'} <ArrowRight className="w-4 h-4" />
             </button>
           </div>
         </motion.div>

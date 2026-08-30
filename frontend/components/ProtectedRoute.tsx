@@ -9,10 +9,12 @@ export default function ProtectedRoute({ children }: { children: React.ReactNode
   const { user } = useAuth();
   const router = useRouter();
 
+  // Whether email verification is enforced is a server-side decision (it
+  // depends on a mail provider being configured). Gating here as well would
+  // bounce freshly-registered users between /dashboard and /login, so the only
+  // client-side rule is "no session → go to /login".
   useEffect(() => {
     if (user === null) {
-      router.replace('/login');
-    } else if (user && user.email_verified === false) {
       router.replace('/login');
     }
   }, [user, router]);

@@ -29,13 +29,16 @@ export default function Dashboard() {
   const [currentTab, setCurrentTab] = useState<'command-center' | 'learning'>('command-center');
 
   const loadIncidents = async () => {
-    setError(null);
     try {
       const data = await fetchIncidents();
       setIncidents(data);
+      // Keep the open incident in sync with the freshly fetched row so a
+      // finished analysis appears without the user reselecting it.
+      setSelectedIncident(prev => (prev ? data.find(i => i.id === prev.id) || prev : null));
+      setError(null);
     } catch (err) {
       console.error('Failed to load incidents:', err);
-      setError('Failed to connect to the backend server. Please verify it is running on the correct port.');
+      setError('Cannot reach the backend. Make sure it is running on http://127.0.0.1:8000.');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -44,14 +47,11 @@ export default function Dashboard() {
 
   useEffect(() => {
     loadIncidents();
-    // Short polling for live updates
-    const intervalId = setInterval(() => {
-      fetchIncidents().then(data => {
-        setIncidents(data);
-        setSelectedIncident(prev => prev ? (data.find(i => i.id === prev.id) || prev) : null);
-      }).catch(err => console.error("Poll failed", err));
-    }, 4000);
+    // Short polling for live updates. Failures here update the same error
+    // state as the initial load, so the connection badge stays truthful.
+    const intervalId = setInterval(loadIncidents, 4000);
     return () => clearInterval(intervalId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleRefresh = () => {
@@ -59,28 +59,30 @@ export default function Dashboard() {
     loadIncidents();
   };
 
+  const connection = error
+    ? { label: 'Backend unreachable', dot: 'bg-accent-rose', text: 'text-accent-rose' }
+    : loading
+      ? { label: 'Connecting…', dot: 'bg-accent-amber', text: 'text-slate-400' }
+      : { label: 'Backend connected', dot: 'bg-accent-emerald dot-pulse', text: 'text-slate-500' };
+
   return (
     <div className="min-h-screen">
-      {/* Top Navigation Bar */}
+      {/* Secondary control bar. The brand + user menu live in the dashboard
+          layout header, so this row only carries navigation and controls. */}
       <nav className="sticky top-0 z-50 glass border-b border-white/[0.06]">
         <div className="max-w-[1600px] mx-auto px-6 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 min-h-8">
             {selectedIncident && (
               <motion.button
                 initial={{ opacity: 0, x: -10 }}
                 animate={{ opacity: 1, x: 0 }}
                 onClick={() => setSelectedIncident(null)}
-                className="w-8 h-8 rounded-lg bg-surface-200/60 flex items-center justify-center hover:bg-surface-200 transition-colors mr-1"
+                className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-surface-200/60 hover:bg-surface-200 transition-colors text-xs text-slate-300"
               >
-                <ArrowLeft size={16} className="text-slate-400" />
+                <ArrowLeft size={14} className="text-slate-400" />
+                Back to incidents
               </motion.button>
             )}
-            <div className="w-8 h-8 rounded-lg bg-orange-500 flex items-center justify-center">
-              <Shield size={16} className="text-white" />
-            </div>
-            <div>
-              <span className="font-semibold tracking-tight text-white">Sentinel-SRE</span>
-            </div>
           </div>
 
           {!selectedIncident && (
@@ -109,10 +111,10 @@ export default function Dashboard() {
               <RefreshCw size={12} className={refreshing ? 'animate-spin' : ''} />
               Refresh
             </button>
-            <div className="flex items-center gap-2 text-xs text-slate-500">
+            <div className={`flex items-center gap-2 text-xs ${connection.text}`}>
               <span className="flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-accent-emerald dot-pulse" />
-                Backend connected
+                <span className={`w-1.5 h-1.5 rounded-full ${connection.dot}`} />
+                {connection.label}
               </span>
             </div>
           </div>

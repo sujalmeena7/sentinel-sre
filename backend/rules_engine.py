@@ -7,7 +7,7 @@ Rules fire FAST and don't need an LLM — they catch the "obvious" stuff.
 """
 
 from dataclasses import dataclass, field
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 
 
 @dataclass
@@ -128,11 +128,11 @@ def evaluate_rules(
     symptoms: List[str],
     signals: List[Dict[str, Any]],
     changes: List[Dict[str, Any]] = None,
-) -> List[RuleMatch]:
+) -> Tuple[List[RuleMatch], List[RuleRejection]]:
     """
     Run all deterministic rules against the incident evidence.
-    Returns a list of RuleMatch objects sorted by confidence (highest first).
-    Only rules with a match score above the threshold are returned.
+    Returns (matches, rejections): rules that fired sorted by confidence
+    (highest first), and rules that did not fire sorted by how close they came.
     """
     changes = changes or []
 
