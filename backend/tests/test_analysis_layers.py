@@ -244,3 +244,60 @@ def test_ranking_is_stable_for_equal_sources():
     ])
 
     assert [h.title for h in ranked] == ["first", "second"]
+
+
+# ─── Pipeline honesty about the LLM layer ───────────────────────────
+#
+# The synthesis step cannot raise — the other three layers are still valid when
+# a provider is down — so the pipeline has to inspect the result rather than
+# assume the absence of an exception means success.
+
+def _run_analysis_with_narrative(monkeypatch, narrative):
+    import hybrid_analyzer
+
+    monkeypatch.setattr(
+        hybrid_analyzer, "generate_hypothesis", lambda *a, **k: narrative
+    )
+    monkeypatch.setattr(
+        hybrid_analyzer, "query_similar_incidents", lambda *a, **k: ([], [], [])
+    )
+    return hybrid_analyzer.run_hybrid_analysis(
+        "payment-api",
+        ["OOMKilled", "pod restart loop"],
+        [{"metric": "memory_usage", "value": 99}],
+        user_id="tenant-1",
+    )
+
+
+def test_the_reasoning_chain_names_the_model_that_wrote_the_narrative(monkeypatch):
+    from rag_engine import Narrative
+
+    result = _run_analysis_with_narrative(
+        monkeypatch, Narrative(text="the analysis", model="deepseek-v4-flash", ok=True)
+    )
+
+    assert result.llm_ok is True
+    assert result.llm_model == "deepseek-v4-flash"
+    assert any("deepseek-v4-flash" in step for step in result.reasoning_chain)
+    assert "deepseek-v4-flash" in result.analysis_breakdown["LLM Synthesis"]
+
+
+def test_a_failed_narrative_is_not_reported_as_generated(monkeypatch):
+    """Regression: the chain logged "LLM narrative generated" even when every
+    provider had refused, because the failure arrived as a plain return value.
+    That line was the first thing read when diagnosing a missing narrative, and
+    it pointed away from the actual cause."""
+    from rag_engine import Narrative
+
+    result = _run_analysis_with_narrative(
+        monkeypatch, Narrative(text="⚠️ unavailable", model="none", ok=False)
+    )
+
+    assert result.llm_ok is False
+    assert result.llm_model == "none"
+    chain = " ".join(result.reasoning_chain)
+    assert "narrative generated" not in chain.lower()
+    assert "No LLM provider answered" in chain
+    assert "Unavailable" in result.analysis_breakdown["LLM Synthesis"]
+    # The deterministic layers must still have produced a verdict.
+    assert result.hypotheses, "rules and anomaly layers must survive an LLM outage"

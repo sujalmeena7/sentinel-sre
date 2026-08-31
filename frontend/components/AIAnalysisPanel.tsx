@@ -55,6 +55,10 @@ interface HybridResult {
   anomaly_report: AnomalyReport;
   similar_historic_incidents: string[];
   llm_narrative: string;
+  // Optional: older stored analyses predate these fields, so treat a missing
+  // llm_ok as "generated" rather than flagging every historic result as degraded.
+  llm_model?: string;
+  llm_ok?: boolean;
   reasoning_chain: string[];
   analysis_breakdown?: { [key: string]: string };
   rejected_hypotheses?: RejectedHypothesis[];
@@ -438,8 +442,28 @@ export default function AIAnalysisPanel({ incident }: AIAnalysisPanelProps) {
               <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-2">
                 <Brain size={12} className="text-accent-purple" />
                 LLM Synthesis
+                {/* Naming the model matters with a fallback chain: a narrative
+                    from the last-resort provider used to be indistinguishable
+                    from one written by the configured primary. */}
+                {analysis.llm_ok !== false && analysis.llm_model && analysis.llm_model !== 'none' && (
+                  <span className="ml-auto normal-case tracking-normal font-mono text-[10px] text-slate-500">
+                    {analysis.llm_model}
+                  </span>
+                )}
+                {analysis.llm_ok === false && (
+                  <span className="ml-auto normal-case tracking-normal text-[10px] text-amber-400 flex items-center gap-1">
+                    <AlertTriangle size={10} />
+                    unavailable
+                  </span>
+                )}
               </h4>
-              <div className="bg-surface-50/30 rounded-xl p-5 border border-white/[0.04] markdown-body">
+              <div
+                className={`rounded-xl p-5 border markdown-body ${
+                  analysis.llm_ok === false
+                    ? 'bg-amber-500/[0.04] border-amber-500/20'
+                    : 'bg-surface-50/30 border-white/[0.04]'
+                }`}
+              >
                 <ReactMarkdown>{analysis.llm_narrative}</ReactMarkdown>
               </div>
             </div>

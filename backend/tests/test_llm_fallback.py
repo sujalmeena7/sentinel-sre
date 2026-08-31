@@ -105,15 +105,44 @@ def test_candidate_llms_is_empty_without_keys():
 
 # ─── Per-attempt timeout and the whole-chain budget ─────────────────
 
-def test_the_remaining_budget_is_passed_as_the_attempt_timeout(monkeypatch):
-    """A pooled gateway needs a real deadline, and it must shrink as the chain
-    burns through its budget rather than resetting per candidate."""
+def test_an_attempt_is_capped_by_the_per_call_timeout_not_the_whole_budget(monkeypatch):
+    """Regression, observed live: handing a candidate the entire remaining
+    budget made LLM_TIMEOUT_SECONDS dead config, so one hung gateway connection
+    consumed all 150s and every fallback was skipped — the chain never ran."""
     llm = _FakeLLM("gateway-model", answer="ok")
     monkeypatch.setattr(rag_engine, "candidate_llms", lambda: [llm])
     monkeypatch.setattr(rag_engine, "LLM_TOTAL_BUDGET_SECONDS", 150.0)
+    monkeypatch.setattr(rag_engine, "LLM_TIMEOUT_SECONDS", 90.0)
 
     assert complete_with_fallback("prompt") == "ok"
-    assert llm.timeouts[0] == pytest.approx(150.0, abs=2.0)
+    assert llm.timeouts[0] == pytest.approx(90.0, abs=2.0)
+
+
+def test_the_attempt_shrinks_to_what_is_left_of_the_budget(monkeypatch):
+    """Late in a chain the remaining budget is the tighter of the two bounds."""
+    llm = _FakeLLM("gateway-model", answer="ok")
+    monkeypatch.setattr(rag_engine, "candidate_llms", lambda: [llm])
+    monkeypatch.setattr(rag_engine, "LLM_TOTAL_BUDGET_SECONDS", 40.0)
+    monkeypatch.setattr(rag_engine, "LLM_TIMEOUT_SECONDS", 90.0)
+
+    complete_with_fallback("prompt")
+    assert llm.timeouts[0] == pytest.approx(40.0, abs=2.0)
+
+
+def test_the_budget_allows_more_than_one_real_attempt(monkeypatch):
+    """A budget that only ever funds a single attempt is not a fallback chain."""
+    first = _FakeLLM("primary", error=RuntimeError("timed out"))
+    second = _FakeLLM("secondary", answer="narrative")
+    monkeypatch.setattr(rag_engine, "candidate_llms", lambda: [first, second])
+
+    assert complete_with_fallback("prompt") == "narrative"
+    assert first.calls == 1 and second.calls == 1
+    # The defaults must leave room for the second attempt after the first burns
+    # a full per-call timeout.
+    assert (
+        rag_engine.LLM_TOTAL_BUDGET_SECONDS - rag_engine.LLM_TIMEOUT_SECONDS
+        >= rag_engine._MIN_ATTEMPT_SECONDS
+    ), "one hung candidate would exhaust the budget and skip every fallback"
 
 
 def test_a_caller_supplied_budget_overrides_the_default(monkeypatch):
@@ -123,6 +152,7 @@ def test_a_caller_supplied_budget_overrides_the_default(monkeypatch):
     llm = _FakeLLM("gateway-model", answer="ok")
     monkeypatch.setattr(rag_engine, "candidate_llms", lambda: [llm])
     monkeypatch.setattr(rag_engine, "LLM_TOTAL_BUDGET_SECONDS", 150.0)
+    monkeypatch.setattr(rag_engine, "LLM_TIMEOUT_SECONDS", 90.0)
 
     assert complete_with_fallback("prompt", budget_seconds=75.0) == "ok"
     assert llm.timeouts[0] == pytest.approx(75.0, abs=2.0)
@@ -252,6 +282,75 @@ def test_hashing_embedding_ranks_related_text_higher():
     unrelated = embed._get_text_embedding("TLS certificate expired on the load balancer")
 
     assert dot(query, related) > dot(query, unrelated)
+
+
+# ─── Reporting which model answered, and failing honestly ───────────
+
+def test_the_answering_model_is_reported(monkeypatch):
+    """Needed to tell "no provider answered" from "the last-resort model
+    answered" — they looked identical in the UI and in the logs."""
+    dead = _FakeLLM("gateway-primary", error=RuntimeError("403 not authorised"))
+    alive = _FakeLLM("groq-backup", answer="narrative")
+    monkeypatch.setattr(rag_engine, "candidate_llms", lambda: [dead, alive])
+
+    completion = rag_engine.complete_with_model("prompt")
+
+    assert completion.text == "narrative"
+    assert completion.model == "groq-backup"
+
+
+def test_generate_hypothesis_reports_success_with_its_model(monkeypatch):
+    monkeypatch.setattr(rag_engine, "candidate_llms", lambda: [_FakeLLM("m1", answer="the analysis")])
+
+    result = rag_engine.generate_hypothesis(["OOMKilled"], [], [], [], [])
+
+    assert result.ok is True
+    assert result.model == "m1"
+    assert result.text == "the analysis"
+
+
+def test_a_total_provider_failure_is_not_rendered_as_the_analysis(monkeypatch):
+    """Regression: the raw chain error was returned as `llm_narrative`, so the
+    dashboard displayed a kilobyte of concatenated provider JSON — in one case
+    in another language — in the panel where the root cause belongs."""
+    raw = (
+        '该 Virtual Key 未授权使用模型 deepseek-v4-flash {"type":"permission_error"}'
+        + "; second-model: HTTP 429 " + "x" * 500
+    )
+    monkeypatch.setattr(
+        rag_engine, "candidate_llms",
+        lambda: [_FakeLLM("deepseek-v4-flash", error=RuntimeError(raw))],
+    )
+
+    result = rag_engine.generate_hypothesis(["OOMKilled"], [], [], [], [])
+
+    assert result.ok is False
+    assert result.model == "none"
+    assert len(result.text) < 700, "the panel gets a sentence, not the whole chain error"
+    assert "x" * 100 not in result.text, "later candidates' errors must not be pasted in"
+    assert "deterministic layers" in result.text, "must say what is still trustworthy"
+    assert "diagnostics" in result.text, "must point at where the detail lives"
+
+
+def test_no_configured_provider_is_reported_as_a_failure_not_a_narrative(monkeypatch):
+    monkeypatch.setattr(rag_engine, "candidate_llms", lambda: [])
+
+    result = rag_engine.generate_hypothesis(["OOMKilled"], [], [], [], [])
+
+    assert result.ok is False
+    assert "LLM_GATEWAY_BASE_URL" in result.text, "must name what is missing"
+    assert "all three are required" in result.text
+
+
+def test_generate_hypothesis_never_raises_on_provider_failure(monkeypatch):
+    """The other three analysis layers are still valid, so synthesis failing
+    must not fail the request."""
+    monkeypatch.setattr(
+        rag_engine, "candidate_llms",
+        lambda: [_FakeLLM("m", error=RuntimeError("boom"))],
+    )
+
+    assert rag_engine.generate_hypothesis(["s"], [], [], [], []).ok is False
 
 
 def test_empty_text_does_not_blow_up():

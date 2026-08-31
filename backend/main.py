@@ -980,6 +980,10 @@ def _serialize_analysis_result(result) -> Dict[str, Any]:
         "anomaly_report": result.anomaly_report,
         "similar_historic_incidents": result.similar_incidents,
         "llm_narrative": result.llm_narrative,
+        # Lets the panel say which model wrote this, and flag the degraded case
+        # instead of rendering a provider error as though it were the analysis.
+        "llm_model": getattr(result, "llm_model", "none"),
+        "llm_ok": getattr(result, "llm_ok", bool(result.llm_narrative)),
         "reasoning_chain": result.reasoning_chain,
         "analysis_breakdown": result.analysis_breakdown,
         "rejected_hypotheses": result.rejected_hypotheses,

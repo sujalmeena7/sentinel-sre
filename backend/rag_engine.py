@@ -22,7 +22,7 @@ import logging
 import re
 import threading
 import time
-from typing import List, Optional
+from typing import List, NamedTuple, Optional
 import chromadb
 import httpx
 from dotenv import load_dotenv
@@ -260,15 +260,28 @@ def _complete_within(llm, prompt: str, seconds: float) -> str:
     return llm.complete(prompt).text
 
 
-def complete_with_fallback(prompt: str, budget_seconds: Optional[float] = None) -> str:
-    """Complete `prompt` with the first model that answers.
+class Completion(NamedTuple):
+    """A completion plus which model actually produced it.
 
-    Walks the candidate chain so a retired model, an exhausted quota or a
-    gateway whose upstream supply is drained degrades to the next option
-    instead of failing the whole request.
+    The model matters as much as the text: with a chain this long, "there is no
+    narrative" and "the narrative came from the last-resort model" look
+    identical in the UI, and diagnosing either meant reading server logs or
+    inferring the provider from latency.
+    """
+
+    text: str
+    model: str
+
+
+def complete_with_model(prompt: str, budget_seconds: Optional[float] = None) -> Completion:
+    """Complete `prompt` with the first model that answers, naming that model.
+
+    Walks the candidate chain so a retired model, an exhausted quota, an
+    unauthorised model on a restricted key or a gateway whose upstream supply is
+    drained degrades to the next option instead of failing the whole request.
 
     The chain is bounded by `budget_seconds` (default LLM_TOTAL_BUDGET_SECONDS)
-    rather than run to exhaustion: with a slow pooled gateway and five
+    rather than run to exhaustion: with a slow pooled gateway and eight
     candidates, a per-candidate timeout alone lets one request outlive the proxy
     waiting on it, and the caller loses the graceful degradation it already had
     ready. Call sites that make two chained completions must pass a smaller
@@ -290,13 +303,47 @@ def complete_with_fallback(prompt: str, budget_seconds: Optional[float] = None) 
             logger.warning(f"LLM budget exhausted; skipping {name} and every candidate after it.")
             break
         try:
-            return _complete_within(llm, prompt, max(remaining, _MIN_ATTEMPT_SECONDS))
+            # min, not the raw remaining budget: handing a candidate the whole
+            # remaining budget makes LLM_TIMEOUT_SECONDS dead config, and one
+            # hung gateway connection then eats the entire chain. Observed
+            # exactly that — a single ReadTimeout consumed all 150s and every
+            # fallback was skipped, so the fallback chain never ran at all.
+            attempt = max(min(LLM_TIMEOUT_SECONDS, remaining), _MIN_ATTEMPT_SECONDS)
+            text = _complete_within(llm, prompt, attempt)
+            if failures:
+                logger.info(f"LLM {name} answered after {len(failures)} earlier candidate(s) failed.")
+            return Completion(text=text, model=name)
         except Exception as exc:
             failures.append(f"{name}: {exc}")
             logger.warning(f"LLM {name} failed ({type(exc).__name__}); trying next candidate.")
     raise LLMUnavailableError(
         "; ".join(failures)
         or "No LLM configured. Set LLM_GATEWAY_API_KEY (+ base URL and model), GROQ_API_KEY or OPENAI_API_KEY."
+    )
+
+
+def complete_with_fallback(prompt: str, budget_seconds: Optional[float] = None) -> str:
+    """`complete_with_model`, for callers that only want the text."""
+    return complete_with_model(prompt, budget_seconds=budget_seconds).text
+
+
+def _degraded_notice(reason: str) -> str:
+    """A short, human explanation for the narrative panel.
+
+    Provider errors are not user-facing copy: the raw chain error is a kilobyte
+    of concatenated JSON — repeated per candidate, sometimes in another language
+    — and putting it in `llm_narrative` renders it verbatim in the dashboard as
+    though it were the analysis. The detail belongs in the log and in
+    /api/v1/diagnostics; the panel gets one sentence and a pointer.
+    """
+    return (
+        "⚠️ **AI narrative unavailable.** Every configured model declined this "
+        "request, so the analysis below comes from the deterministic layers only "
+        "— the ranked hypotheses, anomaly scores and retrieved incidents are all "
+        "still valid.\n\n"
+        f"First provider error: `{reason.split(';')[0].strip()[:200]}`\n\n"
+        "Check `providers.llm_chain` in `/api/v1/diagnostics` for the models that "
+        "were tried, in order."
     )
 
 
@@ -748,6 +795,20 @@ def query_similar_incidents(service_name: str, symptoms: list, signals: list, us
 # PHASE 6: Structured LLM Prompt with Explicit Feedback Routing
 # ═══════════════════════════════════════════════════════════════════════
 
+class Narrative(NamedTuple):
+    """The synthesis result, with enough context to report it honestly.
+
+    `ok` exists because the previous version returned the failure as an ordinary
+    string, so the pipeline could not tell success from failure and recorded
+    "LLM narrative generated" either way — which is exactly the log line you
+    read when trying to work out why there is no narrative.
+    """
+
+    text: str
+    model: str
+    ok: bool
+
+
 def generate_hypothesis(
     symptoms: list,
     signals: list,
@@ -756,17 +817,24 @@ def generate_hypothesis(
     unrated: list,
     extra_context: str = "",
     budget_seconds: Optional[float] = None,
-):
+) -> Narrative:
     """
     Generate a root cause hypothesis using the LLM with structured
     positive/negative feedback blocks injected into the prompt.
+
+    Never raises: a provider outage degrades to `ok=False` with a short,
+    user-facing notice, because every other layer of the analysis is still valid.
     """
-    llm = get_llm()
-    if llm is None:
-        return (
-            "⚠️ No LLM API key configured. Set LLM_GATEWAY_API_KEY with "
-            "LLM_GATEWAY_BASE_URL and LLM_GATEWAY_MODEL (or GROQ_API_KEY / "
-            "OPENAI_API_KEY) in your .env file to enable hypothesis generation."
+    if get_llm() is None:
+        return Narrative(
+            text=(
+                "⚠️ **No LLM provider configured.** Set `LLM_GATEWAY_API_KEY` with "
+                "`LLM_GATEWAY_BASE_URL` and `LLM_GATEWAY_MODEL` (all three are "
+                "required), or `GROQ_API_KEY` / `OPENAI_API_KEY`. The deterministic "
+                "analysis below is unaffected."
+            ),
+            model="none",
+            ok=False,
         )
 
     pos_block = chr(10).join(positives) if positives else "No verified examples available yet."
@@ -808,7 +876,9 @@ Provide a comprehensive analysis:
 Be specific, technical, and actionable. Reference actual metric values.
 """
     try:
-        return complete_with_fallback(prompt, budget_seconds=budget_seconds)
+        completion = complete_with_model(prompt, budget_seconds=budget_seconds)
+        return Narrative(text=completion.text, model=completion.model, ok=True)
     except LLMUnavailableError as e:
-        logger.error(f"LLM call failed: {e}")
-        return f"LLM call failed: {str(e)}"
+        # The full chain error goes to the log, not to the dashboard.
+        logger.error(f"LLM synthesis failed across every candidate: {e}")
+        return Narrative(text=_degraded_notice(str(e)), model="none", ok=False)

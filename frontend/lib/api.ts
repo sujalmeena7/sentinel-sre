@@ -99,6 +99,9 @@ export interface AnalysisResult {
   anomaly_report: any;
   similar_historic_incidents: string[];
   llm_narrative: string;
+  // Absent on analyses stored before the provider chain was made reportable.
+  llm_model?: string;
+  llm_ok?: boolean;
   reasoning_chain: string[];
   analysis_breakdown?: { [key: string]: string };
   rejected_hypotheses?: any[];

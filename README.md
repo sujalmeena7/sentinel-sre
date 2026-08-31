@@ -89,6 +89,8 @@ Completion goes over plain HTTP to `/chat/completions`, which every major provid
 
 `GET /api/v1/diagnostics` reports `providers.llm_chain`: the exact model ids that would be tried, in order, so "why is there no narrative?" starts from fact rather than guesswork. Keys are never returned.
 
+Each analysis also reports **which model actually wrote it** (`llm_model`) and whether it was written at all (`llm_ok`), both shown in the panel. With a chain this long those are not cosmetic: a narrative from the last-resort provider and a narrative from the configured primary were previously indistinguishable, and a total provider failure rendered the raw chain error in the panel as though it were the analysis.
+
 Timeouts are sized for a pooled gateway rather than a direct call: `LLM_TIMEOUT_SECONDS` (90s) per attempt, and `LLM_TOTAL_BUDGET_SECONDS` (150s) for the whole chain. Both come from measurement — a real narrative on the configured gateway takes a **~40s median and up to ~56s**, so the previous 20s per-attempt ceiling cut off most healthy calls and read as "every model failed".
 
 The chain budget exists because per-attempt timeouts alone do not bound a chain: eight candidates at 90s each would outlive gunicorn's 180s request timeout and return a 502 instead of the data-only postmortem the app already has ready. Postmortem generation makes **two** chained completions in one request (analysis, then narration), so that path passes `LLM_CHAINED_BUDGET_SECONDS` — half the budget per leg. Tests assert both relationships against the real gunicorn config.
@@ -97,7 +99,7 @@ The chain budget exists because per-attempt timeouts alone do not bound a chain:
 
 ### 3. Degrades Instead of Failing
 Every external dependency has a fallback, because they all fail in practice:
-*   Providers retire model ids and exhaust quotas — unreachable models are skipped at call time and the chain moves on.
+*   Providers retire model ids, exhaust quotas, and restrict keys to a model whitelist — unreachable models are skipped at call time and the chain moves on. A single hung connection cannot eat the whole budget: each attempt is capped at `LLM_TIMEOUT_SECONDS` *and* at whatever is left of the chain budget, whichever is smaller.
 *   Embedding APIs run out of quota — a dependency-free local hashing embedding takes over (lexical, not semantic) on its own Chroma collection. Gateway embeddings are used **only** when `LLM_GATEWAY_EMBED_MODEL` is set, because most gateways proxy chat only and a wrong value fails on every indexed incident rather than once.
 *   No LLM key at all — postmortems still render as a data-only document from the deterministic layers, labelled as generated without AI narration.
 
@@ -121,7 +123,7 @@ Built-in resilience testing environment. Trigger simulated memory leaks, databas
 *   **Backend**: Python 3.10–3.12, FastAPI, SQLModel, Uvicorn/Gunicorn, slowapi (rate limiting), PyJWT + bcrypt.
 *   **Intelligence**: LlamaIndex, any OpenAI-compatible LLM provider (gateway → Groq → OpenAI, in that order), OpenAI embeddings with a local hashing fallback.
 *   **Storage**: SQLite locally / PostgreSQL in production, ChromaDB (vector search).
-*   **Testing**: pytest + FastAPI `TestClient` — 140 tests, fully offline.
+*   **Testing**: pytest + FastAPI `TestClient` — 160 tests, fully offline.
 *   **Deployment**: Vercel (Frontend), Render (Backend).
 
 ---
@@ -192,7 +194,7 @@ The suite is hermetic — a temp SQLite DB, a temp Chroma path, blanked API keys
 ```bash
 cd backend
 source venv/Scripts/activate
-pytest                 # 140 tests
+pytest                 # 160 tests
 ```
 
 Layout:
