@@ -212,6 +212,8 @@ def test_null_content_becomes_an_empty_string(monkeypatch):
 def test_candidate_llms_builds_the_groq_chain_then_openai(monkeypatch):
     monkeypatch.setattr(rag_engine, "groq_api_key", "gk")
     monkeypatch.setattr(rag_engine, "openai_api_key", "ok")
+    # No gateway configured — this test is about the direct-key chain.
+    monkeypatch.setattr(rag_engine, "gateway_api_key", "")
 
     candidates = rag_engine.candidate_llms()
 
@@ -226,6 +228,7 @@ def test_candidate_llms_builds_the_groq_chain_then_openai(monkeypatch):
 
 def test_a_duplicate_groq_model_override_is_not_tried_twice(monkeypatch):
     """Setting GROQ_MODEL to one of the fallbacks must not double the attempt."""
+    monkeypatch.setattr(rag_engine, "gateway_api_key", "")
     monkeypatch.setattr(rag_engine, "groq_api_key", "gk")
     monkeypatch.setattr(rag_engine, "openai_api_key", "")
     monkeypatch.setattr(rag_engine, "GROQ_MODEL", rag_engine.GROQ_FALLBACK_MODELS[0])
@@ -276,6 +279,41 @@ def test_the_request_timeout_outlives_a_postmortem_llm_call():
     assert config["timeout"] > rag_engine.LLM_TIMEOUT_SECONDS, (
         "the worker must not be killed before the LLM call it is waiting on "
         "has had a chance to time out and be handled"
+    )
+
+
+def test_the_whole_fallback_chain_fits_inside_the_request_timeout():
+    """The invariant that matters once a slow gateway leads the chain.
+
+    Per-candidate timeouts alone do not bound the chain: five candidates at
+    LLM_TIMEOUT_SECONDS each runs far past gunicorn's limit, and the worker is
+    killed before `_generate_postmortem_markdown` can catch LLMUnavailableError
+    and return its data-only document — the user gets a 502 instead of a
+    postmortem the app already had the facts for.
+    """
+    config = _gunicorn_config()
+    assert rag_engine.LLM_TOTAL_BUDGET_SECONDS < config["timeout"], (
+        f"the chain budget ({rag_engine.LLM_TOTAL_BUDGET_SECONDS}s) must leave "
+        f"gunicorn's {config['timeout']}s timeout room to return the fallback"
+    )
+    assert rag_engine.LLM_TIMEOUT_SECONDS <= rag_engine.LLM_TOTAL_BUDGET_SECONDS, (
+        "a single attempt may not be allowed to outlast the budget for the whole chain"
+    )
+
+
+def test_two_chained_completions_also_fit_inside_the_request_timeout():
+    """Postmortem generation runs the analysis chain and then narrates the
+    document, both synchronously in one request. Two full budgets would be 300s
+    against a 180s ceiling, so that path passes LLM_CHAINED_BUDGET_SECONDS."""
+    config = _gunicorn_config()
+    assert 2 * rag_engine.LLM_CHAINED_BUDGET_SECONDS < config["timeout"], (
+        f"two legs at {rag_engine.LLM_CHAINED_BUDGET_SECONDS}s exceed gunicorn's "
+        f"{config['timeout']}s timeout"
+    )
+    # A leg still has to be long enough to be useful: the measured median for a
+    # real narrative on a pooled gateway is ~40s.
+    assert rag_engine.LLM_CHAINED_BUDGET_SECONDS >= 60, (
+        "a leg this short would time out on a gateway before the first token"
     )
 
 
@@ -332,11 +370,30 @@ def test_diagnostics_requires_the_token_once_one_is_configured(client, monkeypat
 def test_diagnostics_never_returns_secret_values(client, monkeypatch):
     monkeypatch.setenv("GROQ_API_KEY", "gsk-super-secret-value")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-another-secret")
+    monkeypatch.setenv("LLM_GATEWAY_API_KEY", "gw-third-secret")
 
     payload = client.get("/api/v1/diagnostics").text
 
     assert "gsk-super-secret-value" not in payload
     assert "sk-another-secret" not in payload
+    assert "gw-third-secret" not in payload
+
+
+def test_diagnostics_reports_the_model_chain_that_would_be_tried(client, monkeypatch):
+    """"Why is there no narrative?" starts with "is the gateway even in the
+    chain?". Model ids are configuration, not secrets, so the order is reported
+    while the keys behind it are not."""
+    monkeypatch.setattr(rag_engine, "gateway_api_key", "gw-key")
+    monkeypatch.setattr(rag_engine, "GATEWAY_BASE_URL", "https://gw.example.com/v1")
+    monkeypatch.setattr(rag_engine, "GATEWAY_MODEL", "gateway-primary")
+    monkeypatch.setattr(rag_engine, "GATEWAY_FALLBACK_MODELS", ("gateway-backup",))
+    monkeypatch.setattr(rag_engine, "groq_api_key", "gk")
+
+    providers = client.get("/api/v1/diagnostics").json()["providers"]
+
+    assert providers["gateway_configured"] is True
+    assert providers["llm_chain"][:2] == ["gateway-primary", "gateway-backup"]
+    assert rag_engine.GROQ_MODEL in providers["llm_chain"], "the free tier stays as a fallback"
 
 
 def test_diagnostics_is_hidden_in_production_without_a_token(client, monkeypatch):

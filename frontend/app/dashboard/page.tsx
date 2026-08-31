@@ -250,7 +250,7 @@ export default function Dashboard() {
       {/* Footer */}
       <footer className="border-t border-white/[0.04] mt-12">
         <div className="max-w-[1600px] mx-auto px-6 py-4 flex items-center justify-between text-xs text-slate-600">
-          <span>Sentinel-SRE v0.1.0 — Built with FastAPI + ChromaDB + Groq</span>
+          <span>Sentinel-SRE v0.1.0 — Built with FastAPI + ChromaDB + LLM</span>
           <span>© 2026 Sentinel-SRE</span>
         </div>
       </footer>

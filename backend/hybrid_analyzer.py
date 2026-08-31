@@ -5,7 +5,7 @@ Orchestrates the full analysis pipeline:
   1. Deterministic Rules Engine  → instant pattern matching
   2. Anomaly Scoring Engine      → statistical z-score analysis
   3. RAG Retrieval               → similar past incidents from ChromaDB
-  4. LLM Synthesis               → Groq generates the final narrative
+  4. LLM Synthesis               → the configured provider writes the narrative
 
 The final output is a ranked list of hypotheses with evidence,
 confidence scores, and recommended actions.
@@ -17,9 +17,24 @@ from dataclasses import dataclass, field, asdict
 from typing import List, Dict, Any
 from rules_engine import evaluate_rules, RuleMatch, RuleRejection
 from anomaly_scorer import score_anomalies, AnomalyReport
-from rag_engine import query_similar_incidents, generate_hypothesis
+from rag_engine import (
+    LLM_TOTAL_BUDGET_SECONDS,
+    query_similar_incidents,
+    generate_hypothesis,
+)
 
 logger = logging.getLogger(__name__)
+
+# The synthesis stage must outlast the LLM fallback chain it is waiting on.
+# A fixed 60s here silently truncated the chain: `generate_hypothesis` catches
+# LLMUnavailableError and returns an explanatory string, but a stage timeout
+# discards that and logs "Step 4 Failed" instead, so a slow gateway looked like
+# a broken pipeline. The margin covers prompt assembly around the call.
+def _stage_timeout(budget: float) -> int:
+    return int(budget) + 15
+
+
+LLM_STAGE_TIMEOUT = _stage_timeout(LLM_TOTAL_BUDGET_SECONDS)
 
 
 @dataclass
@@ -119,13 +134,20 @@ def run_hybrid_analysis(
     signals: List[Any],
     changes: List[Any] = None,
     user_id: str = None,
+    llm_budget_seconds: float = None,
 ) -> HybridAnalysisResult:
     """
     Execute the full hybrid reasoning pipeline for a specific tenant.
     user_id is MANDATORY at the RAG layer for isolation; callers in
     multi-tenant mode must always pass it.
+
+    `llm_budget_seconds` bounds the synthesis chain. Callers that make a second
+    LLM call in the same request (postmortem generation) must pass a reduced
+    budget so the two legs together stay inside the request timeout.
+
     Returns a comprehensive analysis result with ranked hypotheses.
     """
+    llm_budget = LLM_TOTAL_BUDGET_SECONDS if llm_budget_seconds is None else llm_budget_seconds
     changes = changes or []
     # Safely unpack stringified items into dicts
     signals = [_parse_powershell_dict(s) for s in signals]
@@ -224,7 +246,7 @@ def run_hybrid_analysis(
         logger.exception("RAG Retrieval step failed")
 
     # ─── STEP 4: LLM Synthesis ───────────────────────────────────
-    reasoning_chain.append("🧠 Step 4: Generating LLM narrative via Groq...")
+    reasoning_chain.append("🧠 Step 4: Generating LLM narrative...")
     llm_narrative = "LLM Synthesis failed or was skipped."
     try:
         # Build an enhanced prompt that includes the rules + anomaly context
@@ -242,7 +264,7 @@ def run_hybrid_analysis(
         # Generate enriched LLM narrative
         llm_narrative = _run_with_timeout(
             generate_hypothesis,
-            60,  # Give LLM 60s
+            _stage_timeout(llm_budget),
             "LLM Synthesis",
             symptoms,
             signals,
@@ -250,6 +272,7 @@ def run_hybrid_analysis(
             negatives,
             unrated,
             extra_context=rules_context + anomaly_context,
+            budget_seconds=llm_budget,
         )
         reasoning_chain.append("  → LLM narrative generated")
     except Exception as e:

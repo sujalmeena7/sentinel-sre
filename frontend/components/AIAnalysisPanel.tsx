@@ -437,7 +437,7 @@ export default function AIAnalysisPanel({ incident }: AIAnalysisPanelProps) {
             <div className="glass rounded-xl p-5 gradient-border">
               <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-2">
                 <Brain size={12} className="text-accent-purple" />
-                LLM Synthesis (Groq)
+                LLM Synthesis
               </h4>
               <div className="bg-surface-50/30 rounded-xl p-5 border border-white/[0.04] markdown-body">
                 <ReactMarkdown>{analysis.llm_narrative}</ReactMarkdown>

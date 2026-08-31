@@ -234,15 +234,30 @@ def diagnostics(request: Request):
         embed_backend = f"unavailable ({type(exc).__name__})"
         vectors = -1
 
+    # Which models would actually be tried, in order. When the narrative is
+    # missing, "is the gateway even in the chain?" is the first question, and
+    # the model ids are configuration, not secrets — the keys never appear.
+    try:
+        from rag_engine import candidate_llms, gateway_configured
+        llm_chain = [c.model for c in candidate_llms()]
+        gateway_ok = gateway_configured()
+    except Exception as exc:
+        llm_chain = [f"unavailable ({type(exc).__name__})"]
+        gateway_ok = False
+
     return {
         "version": "0.3.0",
         "startup": STARTUP_STATUS,
         "database": {"ok": db_ok, "backend": db_detail if db_ok else "error", "error": None if db_ok else db_detail},
         "vector_store": {"embedding_backend": embed_backend, "vectors": vectors},
         "providers": {
+            "gateway_configured": gateway_ok,
+            "gateway_base_url": os.getenv("LLM_GATEWAY_BASE_URL", "").strip(),
+            "gateway_key_present": bool(os.getenv("LLM_GATEWAY_API_KEY", "").strip()),
             "groq_key_present": bool(os.getenv("GROQ_API_KEY", "").strip()),
             "openai_key_present": bool(os.getenv("OPENAI_API_KEY", "").strip()),
             "groq_model": os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
+            "llm_chain": llm_chain,
             "mail_configured": email_delivery_configured(),
         },
         "cors_allowed_origins": _allowed_origins(),
@@ -1419,7 +1434,11 @@ def _teams_payload(markdown: str, incident: Incident) -> Dict[str, Any]:
 
 
 async def _generate_postmortem_markdown(incident_id: str, session: Session) -> str:
-    from rag_engine import complete_with_fallback, LLMUnavailableError
+    from rag_engine import (
+        LLM_CHAINED_BUDGET_SECONDS,
+        complete_with_fallback,
+        LLMUnavailableError,
+    )
 
     incident = session.get(Incident, incident_id)
     if not incident:
@@ -1481,7 +1500,8 @@ async def _generate_postmortem_markdown(incident_id: str, session: Session) -> s
     reasoning_summary = ""
     try:
         result = await asyncio.to_thread(
-            run_hybrid_analysis, service, incident.symptoms, incident.signals, incident.changes, incident.user_id
+            run_hybrid_analysis, service, incident.symptoms, incident.signals, incident.changes,
+            incident.user_id, LLM_CHAINED_BUDGET_SECONDS,
         )
         hypotheses_text = "\n".join(
             [f"  {i+1}. {h.title} (Confidence: {h.confidence}%) - {h.description}"
@@ -1615,7 +1635,9 @@ Constraints:
 """
 
     try:
-        markdown = await asyncio.to_thread(complete_with_fallback, prompt)
+        markdown = await asyncio.to_thread(
+            complete_with_fallback, prompt, LLM_CHAINED_BUDGET_SECONDS
+        )
         logger.info(f"Postmortem generated for incident {incident_id}")
         return markdown
     except LLMUnavailableError as exc:

@@ -42,6 +42,10 @@ for _key in (
     "SLACK_WEBHOOK_URL", "TEAMS_WEBHOOK_URL",
     "ALLOW_UNVERIFIED_LOGIN", "RENDER", "VERCEL",
     "GROQ_API_KEY", "OPENAI_API_KEY",
+    # The gateway is three values, and any one of them left populated from the
+    # developer's real .env would put a live provider back in the chain.
+    "LLM_GATEWAY_API_KEY", "LLM_GATEWAY_BASE_URL", "LLM_GATEWAY_MODEL",
+    "LLM_GATEWAY_FALLBACK_MODELS", "LLM_GATEWAY_EMBED_MODEL",
 ):
     os.environ[_key] = ""
 

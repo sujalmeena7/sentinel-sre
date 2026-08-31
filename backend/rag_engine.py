@@ -17,9 +17,11 @@ Hardening features:
 import os
 import math
 import hashlib
+import inspect
 import logging
 import re
 import threading
+import time
 from typing import List, Optional
 import chromadb
 import httpx
@@ -76,9 +78,28 @@ def vector_count() -> int:
     with chroma_lock:
         return chroma_collection.count()
 
-# ─── LLM Setup (ordered fallback chain: Groq models, then OpenAI) ─────
+# ─── LLM Setup (ordered chain: gateway, then Groq models, then OpenAI) ─
+# Every provider here speaks the same OpenAI `/chat/completions` protocol, so a
+# provider is only ever three values: a key, a base URL and a model id. That is
+# what makes an arbitrary OpenAI-compatible gateway a config change rather than
+# a code change.
+gateway_api_key = os.getenv("LLM_GATEWAY_API_KEY", "")
 groq_api_key = os.getenv("GROQ_API_KEY", "")
 openai_api_key = os.getenv("OPENAI_API_KEY", "")
+
+# The gateway is tried first when configured: it is the provider with credit on
+# it, and the direct Groq/OpenAI keys behind it are the free-tier remnants.
+# There is no default model id — a gateway's catalogue is its own, and guessing
+# one would produce a 404 that looks like an outage. Configure all three or the
+# gateway is skipped entirely.
+GATEWAY_BASE_URL = os.getenv("LLM_GATEWAY_BASE_URL", "").strip()
+GATEWAY_MODEL = os.getenv("LLM_GATEWAY_MODEL", "").strip()
+# Comma-separated. A quota-sharing gateway pools many upstream keys, so a model
+# can be "supply exhausted" for a while without the gateway itself being down —
+# naming a second and third choice is what keeps the narrative alive.
+GATEWAY_FALLBACK_MODELS = tuple(
+    m.strip() for m in os.getenv("LLM_GATEWAY_FALLBACK_MODELS", "").split(",") if m.strip()
+)
 
 # Groq retires models regularly — a hardcoded id eventually starts returning
 # 404 model_not_found and silently kills every narrative. The id is therefore
@@ -88,7 +109,36 @@ GROQ_FALLBACK_MODELS = ("openai/gpt-oss-20b", "groq/compound-mini")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 GROQ_BASE_URL = os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
-LLM_TIMEOUT_SECONDS = 20.0
+
+# 90s, not the old 20s. A pooled gateway is far slower than a direct Groq call:
+# the observed profile for a flash-class model is first-content P50 ~11s / P95
+# ~28s and a successful-call P95 of ~56s, because the gateway retries and
+# switches among upstream keys behind the scenes. A 20s ceiling cut off the
+# majority of P95 calls and surfaced as "every model failed".
+LLM_TIMEOUT_SECONDS = float(os.getenv("LLM_TIMEOUT_SECONDS", "90"))
+
+# Wall-clock ceiling for a whole fallback chain, per call site. Postmortem
+# generation is synchronous inside a request that gunicorn severs at 180s
+# (see gunicorn.conf.py), while the chain can be five candidates long — at 90s
+# each that is 450s of trying, so the proxy would kill the request and the user
+# would get a 502 instead of the data-only postmortem the code already has
+# ready. The budget makes the chain give up while there is still time to
+# degrade gracefully.
+LLM_TOTAL_BUDGET_SECONDS = float(os.getenv("LLM_TOTAL_BUDGET_SECONDS", "150"))
+
+# Budget for one leg of a request that makes two chained LLM calls. Postmortem
+# generation runs the analysis pipeline (one chain) and then narrates the
+# document (a second chain) inside a single synchronous request, so two full
+# budgets would be 300s against gunicorn's 180s ceiling — the worker dies before
+# the handler can catch LLMUnavailableError and return its data-only document.
+# Measured median for a real narrative on this gateway is ~40s, so half the
+# budget still covers one attempt plus a retry.
+LLM_CHAINED_BUDGET_SECONDS = LLM_TOTAL_BUDGET_SECONDS / 2
+
+# Shorter than LLM_TIMEOUT_SECONDS: below this there is no point starting
+# another provider, since a flash-class model rarely returns first content in
+# under ~10s.
+_MIN_ATTEMPT_SECONDS = 12.0
 
 
 class LLMUnavailableError(RuntimeError):
@@ -106,7 +156,9 @@ class ChatCompletionLLM:
     OOM-killed, which is what took the last deploy down. Importing `main` drops
     from 397 MB to 128 MB with this class in place.
 
-    Groq and OpenAI both speak `/chat/completions`, so one client covers both.
+    Groq and OpenAI both speak `/chat/completions`, so one client covers both —
+    and so does any OpenAI-compatible gateway, which is why pointing this at a
+    third-party gateway needs no new code, only a base URL and a model id.
     The `.model` attribute and `.complete(prompt).text` shape are kept so
     `complete_with_fallback` and its tests are unaffected.
     """
@@ -123,7 +175,7 @@ class ChatCompletionLLM:
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
 
-    def complete(self, prompt: str) -> "ChatCompletionLLM._Response":
+    def complete(self, prompt: str, timeout: Optional[float] = None) -> "ChatCompletionLLM._Response":
         response = httpx.post(
             f"{self._base_url}/chat/completions",
             headers={
@@ -135,7 +187,7 @@ class ChatCompletionLLM:
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.2,
             },
-            timeout=self._timeout,
+            timeout=timeout or self._timeout,
         )
         if response.status_code != 200:
             # Surface the provider's own message: "model_not_found" and
@@ -153,9 +205,25 @@ def _has(key: str) -> bool:
     return bool(key) and key != "dummy"
 
 
+def gateway_configured() -> bool:
+    """A gateway needs all three of key, base URL and model id to be usable."""
+    return bool(_has(gateway_api_key) and GATEWAY_BASE_URL and GATEWAY_MODEL)
+
+
 def candidate_llms() -> list:
-    """Every model we are willing to try, in preference order."""
+    """Every model we are willing to try, in preference order.
+
+    Gateway first (it is the provider with paid credit), then the Groq free
+    tier, then OpenAI. Each entry is the same client class against a different
+    base URL.
+    """
     candidates = []
+    if gateway_configured():
+        models = list(dict.fromkeys([GATEWAY_MODEL, *GATEWAY_FALLBACK_MODELS]))
+        candidates += [
+            ChatCompletionLLM(model=m, api_key=gateway_api_key, base_url=GATEWAY_BASE_URL)
+            for m in models
+        ]
     if _has(groq_api_key):
         models = list(dict.fromkeys([GROQ_MODEL, *GROQ_FALLBACK_MODELS]))
         candidates += [
@@ -175,22 +243,60 @@ def get_llm():
     return candidates[0] if candidates else None
 
 
-def complete_with_fallback(prompt: str) -> str:
+def _complete_within(llm, prompt: str, seconds: float) -> str:
+    """Call `llm.complete`, passing a per-attempt timeout only if it takes one.
+
+    The kwarg is probed with `inspect` rather than by catching TypeError: a
+    TypeError raised *inside* a real `complete()` would otherwise be
+    misdiagnosed as "this client has no timeout parameter" and silently retried
+    without a deadline.
+    """
+    try:
+        accepts_timeout = "timeout" in inspect.signature(llm.complete).parameters
+    except (TypeError, ValueError):  # builtins / C callables have no signature
+        accepts_timeout = False
+    if accepts_timeout:
+        return llm.complete(prompt, timeout=seconds).text
+    return llm.complete(prompt).text
+
+
+def complete_with_fallback(prompt: str, budget_seconds: Optional[float] = None) -> str:
     """Complete `prompt` with the first model that answers.
 
-    Walks the candidate chain so a retired Groq model or an exhausted OpenAI
-    quota degrades to the next option instead of failing the whole request.
+    Walks the candidate chain so a retired model, an exhausted quota or a
+    gateway whose upstream supply is drained degrades to the next option
+    instead of failing the whole request.
+
+    The chain is bounded by `budget_seconds` (default LLM_TOTAL_BUDGET_SECONDS)
+    rather than run to exhaustion: with a slow pooled gateway and five
+    candidates, a per-candidate timeout alone lets one request outlive the proxy
+    waiting on it, and the caller loses the graceful degradation it already had
+    ready. Call sites that make two chained completions must pass a smaller
+    budget — see LLM_CHAINED_BUDGET_SECONDS.
     """
+    budget = LLM_TOTAL_BUDGET_SECONDS if budget_seconds is None else budget_seconds
     failures = []
+    deadline = time.monotonic() + budget
     for llm in candidate_llms():
         name = getattr(llm, "model", type(llm).__name__)
+        remaining = deadline - time.monotonic()
+        # `and failures` so the first candidate always gets one attempt, even
+        # with an absurdly small budget configured.
+        if remaining < _MIN_ATTEMPT_SECONDS and failures:
+            failures.append(
+                f"{name}: skipped, the {budget:.0f}s budget for the "
+                "whole chain was spent on earlier candidates"
+            )
+            logger.warning(f"LLM budget exhausted; skipping {name} and every candidate after it.")
+            break
         try:
-            return llm.complete(prompt).text
+            return _complete_within(llm, prompt, max(remaining, _MIN_ATTEMPT_SECONDS))
         except Exception as exc:
             failures.append(f"{name}: {exc}")
             logger.warning(f"LLM {name} failed ({type(exc).__name__}); trying next candidate.")
     raise LLMUnavailableError(
-        "; ".join(failures) or "No LLM configured. Set GROQ_API_KEY or OPENAI_API_KEY."
+        "; ".join(failures)
+        or "No LLM configured. Set LLM_GATEWAY_API_KEY (+ base URL and model), GROQ_API_KEY or OPENAI_API_KEY."
     )
 
 
@@ -241,7 +347,89 @@ class HashingEmbedding(BaseEmbedding):
         return self._vector(text)
 
 
+class HTTPEmbedding(BaseEmbedding):
+    """OpenAI-protocol `/embeddings` client over httpx, for arbitrary providers.
+
+    `OpenAIEmbedding` cannot serve a gateway: it validates `model` against a
+    hardcoded enum of OpenAI's own model names (`OpenAIEmbeddingModelType`) and
+    raises ValueError before issuing any request, so a gateway-specific id is
+    rejected outright — which showed up as "gateway embeddings unavailable" for
+    a perfectly working endpoint. The endpoint is a trivial POST, so this
+    mirrors what ChatCompletionLLM already does for completion.
+
+    `dim` is discovered from the first response rather than configured: the
+    width is a property of the provider's model, and a wrong guess would only
+    surface later as a Chroma dimension mismatch.
+    """
+
+    model: str
+    api_key: str
+    base_url: str
+    timeout: float = 30.0
+    dim: Optional[int] = None
+
+    @classmethod
+    def class_name(cls) -> str:
+        return "http_embedding"
+
+    def _embed(self, texts: List[str]) -> List[List[float]]:
+        response = httpx.post(
+            f"{self.base_url.rstrip('/')}/embeddings",
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            },
+            json={"model": self.model, "input": texts},
+            timeout=self.timeout,
+        )
+        if response.status_code != 200:
+            raise RuntimeError(f"HTTP {response.status_code}: {response.text[:300]}")
+        payload = response.json()
+        try:
+            # Sort by index: the protocol does not promise response order, and
+            # a mismatched pairing would attach each incident's vector to the
+            # wrong text — corrupting retrieval silently rather than failing.
+            rows = sorted(payload["data"], key=lambda row: row.get("index", 0))
+            vectors = [row["embedding"] for row in rows]
+        except (KeyError, TypeError) as exc:
+            raise RuntimeError(f"Malformed embedding response: {str(payload)[:200]}") from exc
+        if len(vectors) != len(texts):
+            raise RuntimeError(
+                f"Embedding count mismatch: asked for {len(texts)}, got {len(vectors)}"
+            )
+        if self.dim is None and vectors:
+            self.dim = len(vectors[0])
+        return vectors
+
+    def _get_query_embedding(self, query: str) -> List[float]:
+        return self._embed([query])[0]
+
+    def _get_text_embedding(self, text: str) -> List[float]:
+        return self._embed([text])[0]
+
+    def _get_text_embeddings(self, texts: List[str]) -> List[List[float]]:
+        return self._embed(texts)
+
+    async def _aget_query_embedding(self, query: str) -> List[float]:
+        return self._get_query_embedding(query)
+
+    async def _aget_text_embedding(self, text: str) -> List[float]:
+        return self._get_text_embedding(text)
+
+
 _embed_backend: Optional[str] = None
+
+# Embeddings are a separate decision from completion. Many OpenAI-compatible
+# gateways proxy chat only, and an unsupported /embeddings endpoint 404s on
+# every single indexed incident rather than failing once — so the gateway is
+# used for embeddings only when a model id is explicitly configured for it.
+GATEWAY_EMBED_MODEL = os.getenv("LLM_GATEWAY_EMBED_MODEL", "").strip()
+
+
+def _probe_embedding(model) -> None:
+    """Force one real call, so an unsupported endpoint fails here and not
+    later on every insert."""
+    model.get_text_embedding("healthcheck")
 
 
 def embedding_backend() -> str:
@@ -249,15 +437,36 @@ def embedding_backend() -> str:
 
     Lazy on purpose: probing the API at import time would make every process
     that merely imports this module (including the test suite) hit the network.
+
+    Order: gateway (only when an embedding model is named for it), then OpenAI,
+    then the local hashing fallback that always works.
     """
     global _embed_backend
     if _embed_backend is not None:
         return _embed_backend
 
+    if gateway_configured() and GATEWAY_EMBED_MODEL:
+        try:
+            model = HTTPEmbedding(
+                model=GATEWAY_EMBED_MODEL,
+                api_key=gateway_api_key,
+                base_url=GATEWAY_BASE_URL,
+            )
+            _probe_embedding(model)
+            Settings.embed_model = model
+            _embed_backend = "gateway"
+            logger.info(f"Embeddings: gateway ({GATEWAY_EMBED_MODEL}, dim={model.dim})")
+            return _embed_backend
+        except Exception as exc:
+            logger.warning(
+                f"Gateway embeddings unavailable ({type(exc).__name__}: {exc}). "
+                "Many gateways proxy chat only — falling back."
+            )
+
     if _has(openai_api_key):
         try:
             model = OpenAIEmbedding(api_key=openai_api_key, max_retries=0, timeout=10.0)
-            model.get_text_embedding("healthcheck")
+            _probe_embedding(model)
             Settings.embed_model = model
             _embed_backend = "openai"
             logger.info("Embeddings: OpenAI API")
@@ -276,8 +485,17 @@ def embedding_backend() -> str:
 
 def _collection_name() -> str:
     """Vectors of different widths cannot share a Chroma collection, so each
-    embedding backend gets its own."""
-    return "incidents" if embedding_backend() == "openai" else "incidents_local_v1"
+    embedding backend gets its own. `incidents` is kept for the OpenAI backend
+    so existing deployments do not orphan the vectors they already have."""
+    backend = embedding_backend()
+    if backend == "openai":
+        return "incidents"
+    if backend == "gateway":
+        # The gateway's embedding model is configurable, and two models of
+        # different width would collide in one collection.
+        suffix = re.sub(r"[^a-z0-9]+", "_", GATEWAY_EMBED_MODEL.lower()).strip("_")
+        return f"incidents_gw_{suffix}"[:60]
+    return "incidents_local_v1"
 
 
 # `Settings.llm` is intentionally left unset. Retrieval in this module is
@@ -537,6 +755,7 @@ def generate_hypothesis(
     negatives: list,
     unrated: list,
     extra_context: str = "",
+    budget_seconds: Optional[float] = None,
 ):
     """
     Generate a root cause hypothesis using the LLM with structured
@@ -545,8 +764,9 @@ def generate_hypothesis(
     llm = get_llm()
     if llm is None:
         return (
-            "⚠️ No LLM API key configured. "
-            "Please set GROQ_API_KEY or OPENAI_API_KEY in your .env file to enable hypothesis generation."
+            "⚠️ No LLM API key configured. Set LLM_GATEWAY_API_KEY with "
+            "LLM_GATEWAY_BASE_URL and LLM_GATEWAY_MODEL (or GROQ_API_KEY / "
+            "OPENAI_API_KEY) in your .env file to enable hypothesis generation."
         )
 
     pos_block = chr(10).join(positives) if positives else "No verified examples available yet."
@@ -588,7 +808,7 @@ Provide a comprehensive analysis:
 Be specific, technical, and actionable. Reference actual metric values.
 """
     try:
-        return complete_with_fallback(prompt)
+        return complete_with_fallback(prompt, budget_seconds=budget_seconds)
     except LLMUnavailableError as e:
         logger.error(f"LLM call failed: {e}")
         return f"LLM call failed: {str(e)}"

@@ -62,12 +62,43 @@ services:
         value: /tmp/chroma_db
       - key: RAG_INDEX_BACKFILL
         value: "1"
+      # ── LLM providers ────────────────────────────────────────────
+      # Chain order is gateway -> Groq -> OpenAI. The gateway is where the paid
+      # credit is; the direct keys behind it are exhausted free tiers kept only
+      # as a last resort. All three gateway values are required for it to be
+      # used at all — a missing model id would 404 on every call. Only the key
+      # is a secret; the base URL and model ids are committed so a redeploy
+      # reproduces the same chain instead of depending on dashboard state.
+      - key: LLM_GATEWAY_API_KEY
+        sync: false
+      - key: LLM_GATEWAY_BASE_URL
+        value: https://tokenbom.com/v1
+      # Chosen by measurement, not by latency alone: on the real analysis prompt
+      # this was both the fastest (~40s median) and the cheapest per analysis of
+      # the models that returned all six required sections. The fastest
+      # responder overall on this gateway costs ~240x as much per analysis.
+      # Re-check with `python scripts/check_gateway.py` when supply shifts.
+      - key: LLM_GATEWAY_MODEL
+        value: deepseek-v4-flash
+      # Different model families, for supply diversity: a quota-sharing gateway
+      # drains one upstream pool at a time, so a same-family fallback tends to
+      # be unavailable in the same moment.
+      - key: LLM_GATEWAY_FALLBACK_MODELS
+        value: minimax-m2.7,qwen3.7-plus,deepseek-v4-pro-0813
       - key: GROQ_API_KEY
         sync: false
       - key: GROQ_MODEL
         value: openai/gpt-oss-120b
       - key: OPENAI_API_KEY
         sync: false
+      # Measured on this gateway: a real narrative takes a ~40s median and up to
+      # ~56s, so the old 20s per-attempt default cut off most healthy calls. The
+      # 150s chain budget stays under gunicorn's 180s timeout so a total provider
+      # failure still returns the data-only postmortem instead of a 502.
+      - key: LLM_TIMEOUT_SECONDS
+        value: "90"
+      - key: LLM_TOTAL_BUDGET_SECONDS
+        value: "150"
       # Lets you read /api/v1/diagnostics when the app is too broken to log in.
       - key: DIAGNOSTICS_TOKEN
         generateValue: true
